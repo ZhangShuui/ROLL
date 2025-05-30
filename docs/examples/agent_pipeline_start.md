@@ -98,7 +98,7 @@ The `AgenticConfig` (defined in `roll/pipeline/agentic/agentic_config.py`) is a 
 * `train_env_manager`, `val_env_manager` – Instances of `EnvManagerConfig` specifying how environments are instantiated and managed for training and validation rollouts.  
 * `reward_normalization` – Configuration for normalizing rewards.
 
-**Example Configurations** – See example YAML files in directories like `examples/agentic_config_game_hz/` (e.g., `ppo_frozen_lake.yaml`). These YAMLs use Hydra to set the fields within `AgenticConfig`.
+**Example Configurations** – See example YAML files in directories like `examples/qwen2.5-0.5B-agentic_ds` (e.g., `agent_val_frozen_lake.yaml`). These YAMLs use Hydra to set the fields within `AgenticConfig`.
 
 **Key parameters often set via YAML for `AgenticConfig` include**
 
@@ -149,7 +149,7 @@ Model paths, types, and distributed strategies are specified in their respective
 The primary method is to use the `examples/start_agentic_pipeline.py` script. This script uses Hydra to load and manage configurations.
 
 1. **Choose or Create a Configuration File**  
-   Start with an example YAML (e.g., `examples/agentic_config_game_hz/ppo_frozen_lake.yaml`) or create your own.
+   Start with an example YAML (e.g., `examples/qwen2.5-0.5B-agentic_ds/agent_val_frozen_lake.yaml`) or create your own.
 
 2. **Execute the Python Launcher Script**
 
@@ -158,8 +158,8 @@ The primary method is to use the `examples/start_agentic_pipeline.py` script. Th
    # export PYTHONPATH=$(pwd):$PYTHONPATH
 
    python examples/start_agentic_pipeline.py \
-          --config-path examples/agentic_config_game_hz \
-          --config-name ppo_frozen_lake
+          --config-path examples/qwen2.5-0.5B-agentic_ds \
+          --config-name agent_val_frozen_lake
    ```
 
    * `--config-path` – Directory containing your YAML configuration.  
@@ -178,16 +178,16 @@ The `start_agentic_pipeline.py` script:
 
 ### Method&nbsp;2: Using Helper Shell Scripts
 
-The `examples` directory often contains shell scripts wrapping the Python launcher (e.g., `start_ppo_pipeline.sh`).
+The `examples` directory often contains shell scripts wrapping the Python launcher (e.g., `run_agentic_pipeline_frozen_lake.sh`).
 
 Example structure:
 
 ```bash
 #!/bin/bash
-# Example: examples/agentic_config_game_hz/start_ppo_pipeline.sh
+# Example: examples/qwen2.5-0.5B-agentic_ds/run_agentic_pipeline_frozen_lake.sh
 
-CONFIG_NAME="ppo"                         # ppo.yaml
-CONFIG_PATH_DIR="examples/agentic_config_game_hz"
+CONFIG_NAME="agent_val_frozen_lake"                         # agent_val_frozen_lake.yaml
+CONFIG_PATH_DIR="examples/qwen2.5-0.5B-agentic_ds"
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 PROJECT_ROOT=$(dirname "$(dirname "$SCRIPT_DIR")")
@@ -207,7 +207,7 @@ python $PROJECT_ROOT/examples/start_agentic_pipeline.py \
 Run it with:
 
 ```bash
-bash examples/agentic_config_game_hz/start_ppo_pipeline.sh
+bash examples/qwen2.5-0.5B-agentic_ds/run_agentic_pipeline_frozen_lake.sh
 ```
 
 ---
@@ -216,7 +216,7 @@ bash examples/agentic_config_game_hz/start_ppo_pipeline.sh
 
 ### Step&nbsp;1: Locate and Review Configuration
 
-* File: `examples/agentic_config_game_hz/ppo_frozen_lake.yaml`  
+* File: `examples/qwen2.5-0.5B-agentic_ds/agent_val_frozen_lake.yaml`  
   Key sections include `exp_name`, `seed`, `output_dir`, model paths, `actor_train`, `actor_infer`, `reference`, PPO parameters, and `custom_envs`.
 
 ### Step&nbsp;2: Prepare the Environment and Dependencies
@@ -233,8 +233,8 @@ bash examples/agentic_config_game_hz/start_ppo_pipeline.sh
 
 ```bash
 python examples/start_agentic_pipeline.py \
-       --config-path examples/agentic_config_game_hz \
-       --config-name ppo_frozen_lake
+       --config-path examples/qwen2.5-0.5B-agentic_ds \
+       --config-name agent_val_frozen_lake
 ```
 
 ### Step&nbsp;4: Monitoring
