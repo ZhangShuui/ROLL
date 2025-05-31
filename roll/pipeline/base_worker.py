@@ -511,7 +511,7 @@ class CriticWorker(Worker):
         return vf_loss, vf_metrics
 
     def forward_func_values(self, data: DataProto, output_tensor: torch.Tensor):
-        values = output_tensor[:, 1:]
+        values = output_tensor[:, :-1]
         values = values.squeeze(dim=-1)
         return values, {"values": values.clone().detach()}
 
