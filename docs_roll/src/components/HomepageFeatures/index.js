@@ -5,7 +5,7 @@ import styles from './styles.module.css';
 const FeatureList = [
   {
     title: 'For Tech Pioneers',
-    // Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    img: 'img/pioneer.png',
     description: (
       <>
         Fast and Cost-Effective.
@@ -19,6 +19,7 @@ const FeatureList = [
   {
     title: 'For Product Developers',
     // Svg: require('@site/static/img/develop.svg').default,
+    img: 'img/develop.png',
     description: (
       <>
         Diverse and Extensible Rewards/Environments.
@@ -32,6 +33,7 @@ const FeatureList = [
   {
     title: 'For Algorithm Researchers',
     // Svg: require('@site/static/img/researcher.svg').default,
+    img: 'img/researcher.png',
     description: (
       <>
         Constrained Device Execution.
@@ -44,12 +46,15 @@ const FeatureList = [
   },
 ];
 
-function Feature({Svg, title, description}) {
+function Feature({Svg = '', title, description, img}) {
   return (
     <div className={clsx('col col--4')}>
       <div className="text--center">
         {
           Svg && <Svg className={styles.featureSvg} role="img" />
+        }
+        {
+          img && <img src={img} alt={title} className={styles.featureSvg} />
         }
       </div>
       <div className="text--center padding-horiz--md">
