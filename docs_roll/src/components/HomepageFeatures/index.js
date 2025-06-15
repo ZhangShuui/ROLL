@@ -5,7 +5,7 @@ import styles from './styles.module.css';
 const FeatureList = [
   {
     title: 'For Tech Pioneers',
-    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    // Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
         Fast and Cost-Effective.
@@ -18,7 +18,7 @@ const FeatureList = [
   },
   {
     title: 'For Product Developers',
-    Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
+    // Svg: require('@site/static/img/develop.svg').default,
     description: (
       <>
         Diverse and Extensible Rewards/Environments.
@@ -31,7 +31,7 @@ const FeatureList = [
   },
   {
     title: 'For Algorithm Researchers',
-    Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
+    // Svg: require('@site/static/img/researcher.svg').default,
     description: (
       <>
         Constrained Device Execution.
