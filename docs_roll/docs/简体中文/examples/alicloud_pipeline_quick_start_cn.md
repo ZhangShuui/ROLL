@@ -1,4 +1,4 @@
-# 阿里云ROLL实践手册
+# 阿里云ROLL快速上手指南
 
 ## 准备环境
 1. 购买阿里云服务器
@@ -13,8 +13,6 @@ curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-contai
 # 安装 NVIDIA Container Toolkit 软件包
 sudo yum install -y nvidia-container-toolkit
 
-# 重启docker
-sudo systemctl restart docker
 ```
 4. 安装 Docker 环境：参考 https://developer.aliyun.com/mirror/docker-ce/
 ```shell
@@ -22,7 +20,7 @@ sudo systemctl restart docker
 sudo yum install -y yum-utils
 
 # Step 2: 添加软件源信息
-yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+sudo yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
 
 # Step 3: 安装Docker
 sudo yum install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin

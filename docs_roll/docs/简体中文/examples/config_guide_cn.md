@@ -140,7 +140,7 @@ num_return_sequences_in_group: 8
 - worker_cls: 环境管理器将使用的具体工作器类的路径。这个类实现了环境交互的逻辑。
 
 
-有关 RLVR/Agentic Pipeline配置和Reward设置的更多详细信息，还可以参阅 [RLVR Pipeline Start](./agent_pipeline_start.md) 和 [Agentic Pipeline Start](./agent_pipeline_start.md)
+有关 RLVR/Agentic Pipeline配置和Reward设置的更多详细信息，还可以参阅 [RLVR Pipeline Start](../../english/examples/agent_pipeline_start.md) 和 [Agentic Pipeline Start](../../english/examples/agent_pipeline_start.md)
 
 ## Worker配置
 

@@ -21,7 +21,7 @@ const config = {
   organizationName: 'alibaba', // Usually your GitHub org/user name.
   projectName: 'ROLL', // Usually your repo name.
 
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
 
   // Even if you don't use internalization, you can use this field to set useful
@@ -91,11 +91,11 @@ const config = {
             items: [
               {
                 label: '阿里云ROLL实践手册',
-                to: '/docs/examples/alicloud_pipeline_quick_start_cn',
+                to: '/docs/简体中文/examples/alicloud_pipeline_quick_start_cn',
               },
               {
                 label: '配置指南',
-                to: '/docs/examples/config_guide_cn',
+                to: '/docs/简体中文/examples/config_guide_cn',
               },
             ],
           },
