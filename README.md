@@ -65,7 +65,7 @@ New to **ROLL**? The interactive mind-map below gives you a bird’s-eye view of
 ### Quick Start
 
 [Quick Start based on alicloud](https://alibaba.github.io/ROLL/docs/english/examples/alicloud_pipeline_quick_start_en)  
-[Installation](https://alibaba.github.io/ROLL/docs/english/installation)
+[Installation](https://alibaba.github.io/ROLL/docs/english/installation)  
 [Config guide](https://alibaba.github.io/ROLL/docs/english/examples/config_guide)
 
 ### Step By Step
