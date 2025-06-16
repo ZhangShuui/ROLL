@@ -58,6 +58,22 @@ New to **ROLL**? The interactive mind-map below gives you a bird’s-eye view of
 
 ---
 
+## 🚀 Get Started
+
+[Documents](https://alibaba.github.io/ROLL/)
+
+### Quick Start
+
+[Quick Start based on alicloud](https://alibaba.github.io/ROLL/docs/english/examples/alicloud_pipeline_quick_start_en)  
+[Installation](https://alibaba.github.io/ROLL/docs/english/installation)
+[Config guide](https://alibaba.github.io/ROLL/docs/english/examples/config_guide)
+
+### Step By Step
+[RLVR Pipeline](https://alibaba.github.io/ROLL/docs/english/examples/rlvr_pipeline_start)  
+[Agentic RL Pipeline](https://alibaba.github.io/ROLL/docs/english/examples/agent_pipeline_start)
+
+---
+
 ## ✨ Key Features
 
 ROLL is engineered to empower a diverse range of users in the LLM and RL landscape.
@@ -139,62 +155,6 @@ We are continuously working to expand ROLL's capabilities:
 * 🔍 **Support DeepseekV3**: Adding compatibility for the newest Deepseek models.
 
 ---
-
-## 🚀 Get Started
-
-### Installation
-
-#### 🐳 Install from Docker
-
-We provide pre-built Docker images for a quick start (Links will be updated):
-
-* `torch2.6.0 + SGlang0.4.6`: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-sglang046
-* `torch2.6.0 + vLLM0.8.4`: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-vllm084
-* `torch2.5.1 + SGlang0.4.3`: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-sglang043
-* `torch2.5.1 + vLLM0.7.3`: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-vllm073
-
-You can also find Dockerfiles under the `docker/` directory to build your own images.
-
-#### 🛠️ Install from Custom Environment
-
-If our pre-built Docker images are not compatible with your environment, you can install ROLL and its dependencies in your Python environment. Please ensure you meet the following prerequisites:
-
-```bash
-# Prerequisites
-CUDA Version >= 12.4
-cuDNN Version >= 9.1.0
-PyTorch >= 2.5.1
-SGlang >= 0.4.3
-vLLM >= 0.7.3
-
-# Clone the repository and install
-git clone https://github.com/alibaba/ROLL.git
-cd ROLL
-pip install -r requirements.txt # Or follow your specific installation steps
-# For development, consider: pip install -e .
-```
-
-### 🗺️ RLVR Step-by-Step
-
-For a detailed guide on using the RLVR pipeline, please see our [📜 RLVR Pipeline Quick Start](./docs/examples/rlvr_pipeline_start.md).
-
-### 🤖 Agentic RL Step-by-Step
-
-For a detailed guide on using the Agentic RL pipeline, please see our [📜 Agent Pipeline Quick Start](./docs/examples/agent_pipeline_start.md).
-
-### ⚙️ Configuration Guide
-
-ROLL integrates cutting-edge technologies like Megatron-Core, SGLang and vLLM to accelerate model training and inference. For a guide on configuring ROLL, please see our [📜 Configuration Guide](./docs/examples/config_guide.md).
-
-### 🔄 About Model Checkpoint Format
-
-For `MegatronStrategy`, model checkpoints are saved in Megatron format by default. To convert them back to HuggingFace format, please use the following command:
-
-```bash
-python mcore_adapter/tools/convert.py --checkpoint_path path_to_megatron_model --output_path path_to_output_hf_model
-```
-
------
 
 ## 🙏 Citation and Acknowledgement
 
