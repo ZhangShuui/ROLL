@@ -29,3 +29,10 @@ cd ROLL
 pip install -r requirements.txt # Or follow your specific installation steps
 # For development, consider: pip install -e .
 ```
+## 🔄 About Model Checkpoint Format
+
+For `MegatronStrategy`, model checkpoints are saved in Megatron format by default. To convert them back to HuggingFace format, please use the following command:
+
+```bash
+python mcore_adapter/tools/convert.py --checkpoint_path path_to_megatron_model --output_path path_to_output_hf_model
+```
