@@ -1,16 +1,22 @@
 import json
 import random
+import threading
 import time
 from collections import defaultdict
+from datetime import datetime
 from threading import Thread, Event
 from typing import Any, Dict, List, Optional, Union
+import queue
 
 import ray
-from ray.util.queue import Queue
+from ray.util.queue import Queue, Empty
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from tqdm import tqdm
 
-from roll.agentic.rollout.es_manager import EnvironmentManager
+from roll.distributed.executor.cluster import Cluster
+from roll.distributed.scheduler.generate_scheduler import RequestScheduler
 from roll.distributed.scheduler.protocol import DataProto
+from roll.pipeline.agentic.agentic_config import EnvManagerConfig
 from roll.utils.functionals import append_to_dict, GenerateRequestType
 from roll.utils.logging import get_logger
 
@@ -18,15 +24,22 @@ logger = get_logger()
 
 
 class RolloutScheduler:
-    def __init__(self, config, env_manager_config, resource_manager, infer_cluster, mode):
+    def __init__(self, config, env_manager_config: EnvManagerConfig, resource_manager, infer_cluster, mode):
         self.config = config
         self.env_manager_config = env_manager_config
+        self.env_nums = self.env_manager_config.env_groups * self.env_manager_config.group_size
         self.resource_manager = resource_manager
         self.infer_cluster = infer_cluster
         self.mode = mode
         self.env_input_queue: Queue = Queue()
         self.env_output_queue: Queue = Queue()
-        self.es_manager: Any = EnvironmentManager(
+        self.generate_scheduler = RequestScheduler.options(
+                scheduling_strategy=NodeAffinitySchedulingStrategy(
+                    node_id=ray.get_runtime_context().get_node_id(),
+                    soft=False,
+                )
+            ).remote(infer_cluster=self.infer_cluster, pipeline_config=config)
+        self.es_manager: Any = Cluster(
             name=self.env_manager_config.name,
             worker_cls=self.env_manager_config.worker_cls,
             resource_manager=self.resource_manager,
@@ -34,7 +47,7 @@ class RolloutScheduler:
         )
         self.es_manager.initialize(
             pipeline_config=self.config,
-            infer_cluster=self.infer_cluster,
+            generate_scheduler=self.generate_scheduler,
             input_queue=self.env_input_queue,
             output_queue=self.env_output_queue,
             mode=self.mode,
@@ -49,6 +62,7 @@ class RolloutScheduler:
         self.alive_check_interval = self.config.alive_check_interval
         self.last_alive_check = time.time()
         self.event = Event()
+        self.exception_queue = queue.Queue()
 
     def get_batch(self, data: DataProto, batch_size):
         self.start_collect_rollouts()
@@ -93,10 +107,18 @@ class RolloutScheduler:
     def start_collect_rollouts(self):
         def collect_rollout():
             while True:
-                rollout: Union[DataProto, str] = self.env_output_queue.get()
+                try:
+                    rollout: Union[DataProto, str] = self.env_output_queue.get_nowait()
+                except Empty:
+                    time.sleep(1)
+                    continue
 
                 if rollout == "stop" or not self.running:
                     self.clear_queue(queue=self.env_output_queue)
+                    break
+                if isinstance(rollout, Exception):
+                    self.exception_queue.put(rollout)
+                    self.event.set()
                     break
 
                 group_id = rollout.non_tensor_batch["traj_group_id"][0]
@@ -110,7 +132,7 @@ class RolloutScheduler:
             while self.running:
                 time.sleep(self.alive_check_interval)
                 self.event.set()
-
+        self.clear_queue(queue=self.exception_queue)
         self.clear_queue(queue=self.env_output_queue)
         self.thread_collect = Thread(target=collect_rollout)
         self.thread_collect.start()
@@ -118,7 +140,7 @@ class RolloutScheduler:
         self.thread_alive_check.start()
 
     def stop_es_manager(self):
-        for _ in range(self.es_manager.world_size):
+        for _ in range(self.env_nums):
             self.env_input_queue.put("stop")
         self.env_output_queue.put("stop")
         self.thread_collect.join()
@@ -132,9 +154,11 @@ class RolloutScheduler:
         if current_time - self.last_alive_check >= self.alive_check_interval:
             outputs: List[DataProto] = cluster.add_request(command=GenerateRequestType.ALIVE_CHECK, data=DataProto())
             request_counts = {key: output.meta_info["request_counts"] for key, output in enumerate(outputs)}
-            metrics = {"time": time.time(), "metrics": request_counts}
-            logger.debug(f"metrics: {json.dumps(metrics)}")
+            metrics = {"time": datetime.now().strftime("%Y%m%d-%H%M%S"), "metrics": request_counts}
+            logger.debug(f"generate flow: {json.dumps(metrics)}")
             self.last_alive_check = current_time
+        if not self.exception_queue.empty():
+            raise self.exception_queue.get()
 
     def clear_queue(self, queue):
         while not queue.empty():

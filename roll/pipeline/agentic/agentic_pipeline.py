@@ -325,6 +325,8 @@ def compute_data_metrics(batch):
     prompt_lengths = prompt_mask.sum(-1).float()  # (batch_size,)
     response_length = response_mask.sum(-1).float()  # (batch_size,)
     returns = batch.batch["returns"]
+    non_prompt_mask = batch.batch["non_prompt_mask"].sum(-1).float()
+    penalty: torch.Tensor = batch.batch["penalty"]
 
     metrics = {
         # score, sequence_score from env
@@ -335,6 +337,10 @@ def compute_data_metrics(batch):
         "critic/rewards/mean": torch.mean(sequence_reward).detach().item(),
         "critic/rewards/max": torch.max(sequence_reward).detach().item(),
         "critic/rewards/min": torch.min(sequence_reward).detach().item(),
+        # penalty
+        "critic/penalty/mean": torch.mean(penalty).detach().item(),
+        "critic/penalty/max": torch.max(penalty).detach().item(),
+        "critic/penalty/min": torch.min(penalty).detach().item(),
         # adv
         "critic/advantages/mean": masked_mean(advantages, response_mask).detach().item(),
         "critic/advantages/max": torch.max(advantages[response_mask]).detach().item(),
@@ -351,6 +357,10 @@ def compute_data_metrics(batch):
         "tokens/prompt_length/mean": torch.mean(prompt_lengths).detach().item(),
         "tokens/prompt_length/max": torch.max(prompt_lengths).detach().item(),
         "tokens/prompt_length/min": torch.min(prompt_lengths).detach().item(),
+        # non-prompt length
+        "tokens/non_prompt_length/mean": torch.mean(non_prompt_mask).detach().item(),
+        "tokens/non_prompt_length/max": torch.max(non_prompt_mask).detach().item(),
+        "tokens/non_prompt_length/min": torch.min(non_prompt_mask).detach().item(),
     }
     if "values" in batch.batch.keys():
         values = batch.batch["values"]

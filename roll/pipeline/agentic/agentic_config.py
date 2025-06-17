@@ -1,5 +1,6 @@
 import os
 import random
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Literal
@@ -42,13 +43,27 @@ class EnvManagerConfig(WorkerConfig):
         default="roll.pipeline.agentic.environment_worker.EnvironmentWorker",
         metadata={"help": "The class of the worker."},
     )
+    max_env_num_per_worker: int = field(
+        default=0,
+        metadata={"help": "The maximum number of envs per worker. one env per thread."}
+    )
 
     def __post_init__(self):
         """
         根据es config计算world_size
         """
-        self.world_size = self.env_groups * self.group_size
-        self.env_configs: Optional[Dict[int, Dict]] = None
+        if self.max_env_num_per_worker <= 0:
+            self.max_env_num_per_worker = self.env_groups * self.group_size
+            logger.warning("all env in one worker by default, you can set max_env_num_per_worker to scale env.")
+        logger.info(f"max_env_num_per_worker: {self.max_env_num_per_worker}")
+
+        self.world_size = (self.env_groups * self.group_size + self.max_env_num_per_worker - 1) // self.max_env_num_per_worker
+        self.env_configs: Optional[Dict[int, Dict[int, Dict]]] = None
+        """
+        worker_rank: 
+            env_id:
+                env_config
+        """
 
 
 @dataclass
@@ -212,24 +227,27 @@ class AgenticConfig(BaseConfig):
         self.make_env_configs(self.train_env_manager)
         self.make_env_configs(self.val_env_manager)
 
-        train_env_num = len(self.train_env_manager.env_configs)
+        train_env_num = self.train_env_manager.env_groups * self.train_env_manager.group_size
         traj_per_env = (self.rollout_batch_size + train_env_num - 1) // train_env_num
         if self.train_env_manager.max_traj_per_env < 0:
             self.train_env_manager.max_traj_per_env = traj_per_env
+        logger.info(f"train_env_manager.max_traj_per_env: {self.train_env_manager.max_traj_per_env}")
         assert self.train_env_manager.max_traj_per_env >= traj_per_env, f"max_traj_per_env must be >= {traj_per_env}"
 
-        val_env_num = len(self.val_env_manager.env_configs)
+        val_env_num = self.val_env_manager.env_groups * self.val_env_manager.group_size
         traj_per_env = (self.val_batch_size + val_env_num - 1) // val_env_num
         if self.val_env_manager.max_traj_per_env < 0:
             self.val_env_manager.max_traj_per_env = traj_per_env
+        logger.info(f"val_env_manager.max_traj_per_env: {self.val_env_manager.max_traj_per_env}")
         assert self.val_env_manager.max_traj_per_env >= traj_per_env, f"max_traj_per_env must be >= {traj_per_env}"
 
     def make_env_configs(self, env_manager_config: EnvManagerConfig):
         # construct env configs
-        env_configs = {}
+        env_configs = defaultdict(defaultdict)
         done_groups = 0
         env_manager_config.env_configs = {}
         group_seeds = {}
+        max_env_num_per_worker = env_manager_config.max_env_num_per_worker
         for tag, n_group in zip(env_manager_config.tags, env_manager_config.n_groups):
             for env_id in range(
                 done_groups * env_manager_config.group_size, (done_groups + n_group) * env_manager_config.group_size
@@ -253,7 +271,8 @@ class AgenticConfig(BaseConfig):
                     "env_class": env_class,
                     "group_seed": group_seeds[group_id],
                 }
-                env_configs[env_id] = entry
+                worker_rank = env_id // max_env_num_per_worker
+                env_configs[worker_rank][env_id] = entry
             done_groups += n_group
         env_manager_config.env_configs = env_configs
 

@@ -36,17 +36,17 @@ logging_steps: 1
 eval_steps: 10
 resume_from_checkpoint: false
 
-rollout_batch_size: 16
-val_batch_size: 16
-prompt_length: 1024
-response_length: 8192
+rollout_batch_size: 32
+val_batch_size: 32
+sequence_length: 8192
 
 reward_clip: 20
 advantage_clip: 10.0
 ppo_epochs: 1
 adv_estimator: "reinforce"
 init_kl_coef: 0.0
-entropy_loss_coef: 0.1
+whiten_advantages: true
+entropy_loss_coef: 0
 
 pretrain: Qwen/Qwen2.5-0.5B-Instruct
 reward_pretrain: Qwen/Qwen2.5-0.5B-Instruct
@@ -61,7 +61,7 @@ actor_train:
     learning_rate: 1.0e-6
     weight_decay: 0
     per_device_train_batch_size: 2
-    gradient_accumulation_steps: 1
+    gradient_accumulation_steps: 2
     warmup_steps: 10
   data_args:
     template: qwen2_5
@@ -91,6 +91,7 @@ actor_infer:
       gpu_memory_utilization: 0.8
       block_size: 16
       load_format: auto
+      enable_prefix_caching: true
   device_mapping: list(range(0,8))
   infer_batch_size: 1
 
@@ -116,14 +117,14 @@ enable_think: False # False -> no think RL
 max_actions_per_traj: 10
 reward_normalization:
   grouping: tags # 可以tags(env_type)/traj_group_id(group)/batch(rollout_batch)... group_by计算reward/adv
-  method: mean # asym_clip / identity / mean_std
+  method: identity # asym_clip / identity / mean_std
 
 custom_envs:
   SimpleSokoban:
     env_type: sokoban
     max_actions_per_traj: ${max_actions_per_traj} # used in environment state manager to control the actual max actions executed per trajectory
     max_steps_per_traj: ${max_actions_per_traj}
-    env_instruction: "You are solving the Sokoban puzzle. You are the player and you need to push all boxes to targets. When you are right next to a box, you can push it by moving in the same direction. You cannot push a box through a wall, and you cannot pull a box. The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>"
+    env_instruction: "You are solving the Sokoban puzzle. You are the player and you need to push all boxes to targets. When you are right next to a box, you can push it by moving in the same direction. You cannot push a box through a wall, and you cannot pull a box. The answer must be one of action in a turn, format is <answer>Right</answer>"
     max_tokens: 100 # used to curate llm prompt "max words", not used for rollout
     env_config: # keys should be a subset of SokobanConfig
       dim_x: 10
@@ -142,15 +143,17 @@ custom_envs:
 
 train_env_manager:
   format_penalty: -0.001
-  env_groups: 16
+  env_groups: 2
   # under the same group, the env config and env seed are ensured to be equal
   group_size: 1
+  max_env_num_per_worker: 1
   tags: [ "FrozenLake" ]
-  n_groups: [ 16 ] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+  n_groups: [ 2 ] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
 
 val_env_manager:
-  env_groups: 16
+  env_groups: 2
   # under the same group, the env config and env seed are ensured to be equal
   group_size: 1
+  max_env_num_per_worker: 1
   tags: [ "SimpleSokoban", "FrozenLake"]
-  n_groups: [ 8, 8 ] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+  n_groups: [ 2, 2 ] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
