@@ -270,12 +270,11 @@ class ActorWorker(Worker):
             dual_clip_loss = -torch.max(-pg_loss, (1 + self.pipeline_config.pg_clip * 2) * advantages)
             pg_loss = torch.where(advantages < 0, dual_clip_loss, pg_loss)
 
-        pg_loss = masked_mean(pg_loss, response_mask, dim=-1).mean()
+        pg_loss = agg_loss(loss_mat=pg_loss, loss_mask=response_mask, loss_agg_mode=self.pipeline_config.loss_agg_mode)
 
         kl_loss = compute_approx_kl(log_probs=log_probs, log_probs_base=ref_log_probs, action_mask=response_mask,
                                     kl_penalty="k3")
-        kl_loss = masked_mean(kl_loss, mask=response_mask, dim=-1).mean()
-        original_kl_loss = kl_loss.mean()
+        kl_loss = agg_loss(loss_mat=kl_loss, loss_mask=response_mask, loss_agg_mode=self.pipeline_config.loss_agg_mode)
 
         approxkl = compute_approx_kl(
             log_probs=log_probs, log_probs_base=old_log_probs, action_mask=response_mask, kl_penalty="mse"
@@ -291,7 +290,7 @@ class ActorWorker(Worker):
         entropy = self.strategy.op_compute_entropy(logits=output_tensor, attention_mask=data.batch["response_mask"])
         entropy_loss = agg_loss(
             loss_mat=entropy,
-            loss_mask=data.batch["response_mask"][:, 1:],
+            loss_mask=response_mask,
             loss_agg_mode=self.pipeline_config.loss_agg_mode,
         )
 
@@ -309,12 +308,15 @@ class ActorWorker(Worker):
             "actor/ratio_mean": masked_mean(ratio, response_mask, dim=-1).mean().detach().item(),
             "actor/ratio_max": torch.max(ratio * response_mask).detach().item(),
             "actor/ratio_min": torch.min(ratio * response_mask + (1 - response_mask) * 1e10).detach().item(),
-            "actor/clipfrac": masked_mean(torch.lt(surr2, surr1).float(), response_mask, dim=-1).mean().detach().item(),
+            "actor/clipfrac": agg_loss(loss_mat=torch.lt(surr2, surr1).float(), loss_mask=response_mask,
+                                       loss_agg_mode=self.pipeline_config.loss_agg_mode).detach().item(),
             "actor/pg_loss": pg_loss.detach().item(),
-            "actor/kl_loss": original_kl_loss.detach().item(),
+            "actor/kl_loss": kl_loss.detach().item(),
             "actor/total_loss": total_loss.detach().item(),
-            "actor/approxkl": masked_mean(approxkl, response_mask, dim=-1).mean().detach().item(),
-            "actor/policykl": masked_mean(policykl, response_mask, dim=-1).mean().detach().item(),
+            "actor/approxkl": agg_loss(loss_mat=approxkl, loss_mask=response_mask,
+                                       loss_agg_mode=self.pipeline_config.loss_agg_mode).detach().item(),
+            "actor/policykl": agg_loss(loss_mat=policykl, loss_mask=response_mask,
+                                       loss_agg_mode=self.pipeline_config.loss_agg_mode).detach().item(),
         }
 
         return total_loss, pg_metrics

@@ -216,7 +216,7 @@ class RLVRConfig(BaseConfig):
     )
     dual_clip_loss: bool = field(default=False, metadata={"help": "Use dual clip loss"})
     loss_agg_mode: Literal["token-mean", "seq-mean-token-sum", "seq-mean-token-mean", "seq-mean-token-sum-norm"] = (
-        field(default="token-mean", metadata={"help": "Loss aggregation mode"})
+        field(default="seq-mean-token-sum", metadata={"help": "Loss aggregation mode"})
     )
     val_greedy: bool = field(default=False, metadata={"help": "Use greedy for validation"})
     val_n_sample: int = field(default=1, metadata={"help": "Number of samples for validation"})

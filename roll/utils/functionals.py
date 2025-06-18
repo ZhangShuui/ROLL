@@ -203,7 +203,8 @@ def entropy_from_logits(logits: torch.Tensor):
     return entropy
 
 
-def agg_loss(loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str):
+def agg_loss(loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str,
+             weights: Optional[torch.Tensor] = None):
     """
     ref: https://github.com/volcengine/verl/blob/78532923368aeb058f62201489546d013df47710/verl/trainer/ppo/core_algos.py#L370
     Aggregate the loss matrix into a scalar.
@@ -216,22 +217,35 @@ def agg_loss(loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str
                                       "seq-mean-token-sum" /
                                       "seq-mean-token-mean" /
                                       "seq-mean-token-sum-norm" /
-            "token-mean" is the default behavior
+            "seq-mean-token-sum" is the default behavior
+        weights: `torch.Tensor`
     Returns:
         loss: `a scalar torch.Tensor`
             aggregated loss
     """
     if loss_agg_mode == "token-mean":
-        loss = masked_mean(loss_mat, loss_mask)
+        if weights is None:
+            weights = torch.ones(loss_mask.shape[0], device=loss_mask.device)
+        loss = masked_mean(loss_mat * weights.unsqueeze(-1), loss_mask)
     elif loss_agg_mode == "seq-mean-token-sum":
-        seq_losses = torch.sum(loss_mat * loss_mask, dim=-1)  # token-sum
-        loss = torch.mean(seq_losses)  # seq-mean
+        seq_losses = masked_mean(loss_mat, loss_mask, dim=-1) # token-sum
+        valid_samples = torch.any(loss_mask > 0, dim=1).float()
+        if weights is None:
+            weights = torch.ones(loss_mask.shape[0], device=loss_mask.device)
+        loss = (seq_losses * weights * valid_samples).sum() / (valid_samples.sum() + 1e-8) # seq-mean
     elif loss_agg_mode == "seq-mean-token-mean":
-        seq_losses = torch.sum(loss_mat * loss_mask, dim=-1) / torch.sum(loss_mask, dim=-1)  # token-mean
-        loss = torch.mean(seq_losses)  # seq-mean
+        seq_losses = masked_mean(loss_mat, loss_mask, dim=-1)
+        seq_losses = seq_losses / (torch.sum(loss_mask, dim=-1) + 1e-8)  # token-mean
+        valid_samples = torch.any(loss_mask > 0, dim=1).float()
+        if weights is None:
+            weights = torch.ones(loss_mask.shape[0], device=loss_mask.device)
+        loss = (seq_losses * weights * valid_samples).sum() / (valid_samples.sum() + 1e-8)  # seq-mean
     elif loss_agg_mode == "seq-mean-token-sum-norm":
-        seq_losses = torch.sum(loss_mat * loss_mask, dim=-1)
-        loss = torch.sum(seq_losses) / loss_mask.shape[-1]  # The divisor
+        seq_losses = masked_mean(loss_mat, loss_mask, dim=-1)
+        valid_samples = torch.any(loss_mask > 0, dim=1).float()
+        if weights is None:
+            weights = torch.ones(loss_mask.shape[0], device=loss_mask.device)
+        loss = (seq_losses * weights * valid_samples).sum() / loss_mask.shape[-1]  # The divisor
         # (loss_mask.shape[-1]) should ideally be constant
         # throughout training to well-replicate the DrGRPO paper.
         # TODO: Perhaps add user-defined normalizer argument to
