@@ -53,7 +53,11 @@ class ResourceManager:
                 ]
             )
             print(f"gpu ranks: {gpu_ranks}")
-            self.node_ranks = list(range(len(self.placement_groups)))
+            self.node_ranks = ray.get(
+                [get_node_rank.options(placement_group=pg).remote() for pg in self.placement_groups])
+            if self.node_ranks.count(0) > 1:
+                # NODE_RANK environment variable is not set in the cluster, so a default value is used for NODE_RANK.
+                self.node_ranks = list(range(len(self.placement_groups)))
 
             self.gpu_ranks = [int(gpu_rank[0]) for gpu_rank in gpu_ranks]
             self.node2pg: Dict[int, PlacementGroup] = {}
