@@ -21,14 +21,23 @@ from roll.utils.logging import get_logger
 
 logger = get_logger()
 
-rank = get_driver_rank()
-world_size = get_driver_world_size()
-master_addr = get_driver_master_addr()
-master_port = get_driver_master_port()
-node_name = get_driver_node_name()
+default_envs = {
+    # "RAY_DEBUG": "legacy"
+    "TORCHINDUCTOR_COMPILE_THREADS": "2",
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "NCCL_CUMEM_ENABLE": "0",   # https://github.com/NVIDIA/nccl/issues/1234
+    "NCCL_NVLS_ENABLE": "0",
+    "ACCL_TUNING_LEVEL": "1",
+}
 
 
 def start_ray_cluster():
+    rank = get_driver_rank()
+    world_size = get_driver_world_size()
+    master_addr = get_driver_master_addr()
+    master_port = get_driver_master_port()
+    node_name = get_driver_node_name()
+
     if is_ray_cluster_running():
         logger.info("Ray cluster already initialized")
         return False
@@ -51,17 +60,14 @@ def start_ray_cluster():
 
 
 def init():
-    manual_start = start_ray_cluster()
+    rank = get_driver_rank()
+    world_size = get_driver_world_size()
+    master_addr = get_driver_master_addr()
+    master_port = get_driver_master_port()
 
+    manual_start = start_ray_cluster()
     runtime_env = {
-        "env_vars": {
-            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-            "TORCHINDUCTOR_COMPILE_THREADS": "2",
-            # "RAY_DEBUG": "legacy",
-            "NCCL_CUMEM_ENABLE": "0",  # https://github.com/NVIDIA/nccl/issues/1234
-            "NCCL_NVLS_ENABLE": "0",
-            "ACCL_TUNING_LEVEL": "1",
-        }
+        "env_vars": default_envs
     }
 
     if not ray.is_initialized():
