@@ -9,20 +9,15 @@ curl -fsSL https://github.com/alibaba/ROLL/blob/main/scripts/install_docker_nvid
 ```
 
 ## 环境配置
-```shell
-# 镜像地址
-# torch2.6.0 + SGlang0.4.6: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-sglang046
-# torch2.6.0 + vLLM0.8.4: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-vllm084
-# torch2.5.1 + SGlang0.4.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-sglang043
-# torch2.5.1 + vLLM0.7.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-vllm073
+从[镜像地址](https://github.com/alibaba/ROLL/blob/main/docs_roll/docs/English/QuickStart/image_address.md)中选择你需要的Docker镜像，下文均以 *torch2.6.0 + vLLM0.8.4* 为例
 
-# 1. 选择一个上述镜像地址，启动一个docker容器，指定GPU支持，暴露容器端口，并始终保持容器运行
+# 1. 启动一个docker容器，指定GPU支持，暴露容器端口，并始终保持容器运行
 sudo docker run -dit \
   --gpus all \
   -p 9001:22 \
   --ipc=host \
   --shm-size=10gb \
-  <image_address> \
+  roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-vllm084 \
   /bin/bash
 
 # 2. 进入docker容器
@@ -37,7 +32,7 @@ git clone https://github.com/alibaba/ROLL.git
 
 # 5. 安装项目依赖（选择对应镜像的requirements文件）
 cd ROLL
-pip install -r requirements_torch260_sglang.txt -i https://mirrors.aliyun.com/pypi/simple/
+pip install -r requirements_torch260_vllm.txt -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
 ## pipeline运行

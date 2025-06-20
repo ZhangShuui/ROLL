@@ -9,20 +9,15 @@ curl -fsSL https://github.com/alibaba/ROLL/blob/main/scripts/install_docker_nvid
 ```
 
 ## Environment Configuration
+Choose your desired image from the [image addresses](https://github.com/alibaba/ROLL/blob/main/docs_roll/docs/English/QuickStart/image_address.md). The following example will use *torch2.6.0 + vLLM0.8.4*.
 ```shell
-# Image Addresses (choose based on your needs)
-# torch2.6.0 + SGlang0.4.6: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-sglang046
-# torch2.6.0 + vLLM0.8.4: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-vllm084
-# torch2.5.1 + SGlang0.4.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-sglang043
-# torch2.5.1 + vLLM0.7.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-vllm073
-
-# 1. Choose an image based on your needs and start a Docker container with GPU support, expose the port, and keep the container running
+# 1. Start a Docker container with GPU support, expose the port, and keep the container running.
 sudo docker run -dit \
   --gpus all \
   -p 9001:22 \
   --ipc=host \
   --shm-size=10gb \
-  <image_id> \
+  roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-vllm084 \
   /bin/bash
 
 # 2. Enter the Docker container
@@ -38,7 +33,7 @@ git clone https://github.com/alibaba/ROLL.git
 
 # 5. Install dependencies (select the requirements file corresponding to your chosen image)
 cd ROLL
-pip install -r requirements_torch260_sglang.txt -i https://mirrors.aliyun.com/pypi/simple/
+pip install -r requirements_torch260_vllm.txt -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
 ## Pipeline Execution
