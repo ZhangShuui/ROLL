@@ -1,60 +1,48 @@
 # 快速上手：单机版部署指南
 
 ## 准备环境
-1. 购买机器，并同步安装GPU驱动
+1. 购买配备GPU的机器，并同步安装GPU驱动
 2. 远程连接GPU实例，进入机器终端
-3. 安装 Docker环境 和 NVIDIA容器工具包
+3. 运行一下命令安装 Docker环境 和 NVIDIA容器工具包
 ```shell
-curl -fsSL https://your-domain.com/install_docker_aliyun.sh | sudo bash
-https://github.com/alibaba/ROLL/blob/main/examples/quick_start/install_docker_nvidia_container_toolkit.sh
+curl -fsSL https://github.com/alibaba/ROLL/blob/main/scripts/install_docker_nvidia_container_toolkit.sh | sudo bash
 ```
 
 ## 环境配置
 ```shell
-# 1. 拉取docker镜像
-sudo docker pull <image_address>
-
 # 镜像地址
 # torch2.6.0 + SGlang0.4.6: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-sglang046
 # torch2.6.0 + vLLM0.8.4: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-vllm084
 # torch2.5.1 + SGlang0.4.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-sglang043
 # torch2.5.1 + vLLM0.7.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-vllm073
 
-# 2. 启动一个docker容器，指定GPU支持，暴露容器端口，并始终保持容器运行
-sudo docker images
+# 1. 选择一个上述镜像地址，启动一个docker容器，指定GPU支持，暴露容器端口，并始终保持容器运行
 sudo docker run -dit \
   --gpus all \
   -p 9001:22 \
   --ipc=host \
   --shm-size=10gb \
-  <image_id> \
+  <image_address> \
   /bin/bash
 
-# 3. 进入docker容器（下次重新连接也要执行这条命令）
-sudo docker ps
+# 2. 进入docker容器
+#    您可以使用 `sudo docker ps` 命令查找运行中的容器ID或名称。
 sudo docker exec -it <container_id> /bin/bash
 
-# 4. 验证GPU是否可见
+# 3. 验证GPU是否可见
 nvidia-smi
 
-# 5. 下载代码
-
-# 安装git（该镜像是ubuntu系统），并clone代码
-apt update && apt install git -y
+# 4. 克隆项目代码
 git clone https://github.com/alibaba/ROLL.git
 
-# 若无法访问github，直接下载zip文件并解压
-wget https://github.com/alibaba/ROLL/archive/refs/heads/main.zip
-unzip main.zip
-
-# 5. 安装依赖（选择对应镜像的requirements文件）
-cd ROLL-main
+# 5. 安装项目依赖（选择对应镜像的requirements文件）
+cd ROLL
 pip install -r requirements_torch260_sglang.txt -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
 ## pipeline运行
 ```shell
-bash examples/quick_start/run_agentic_pipeline_frozen_lake_single_node_demo.sh
+bash examples/agentic_demo/run_agentic_pipeline_frozen_lake_single_node_demo.sh
 ```
 
 pipeline运行中的log截图示例：
@@ -111,6 +99,3 @@ val_env_manager.tags: [SimpleSokoban, FrozenLake]
 # 减少总的训练步骤，以便更快运行一个完整的训练流程，用于快速调试
 max_steps: 100
 ```
-
-
-

@@ -1,27 +1,22 @@
 # Quickstart: Singel Node Deployment Guide
 
 ## Environment Preparation
-1. Purchase a machine and install GPU drivers simultaneously
+1. Purchase a machine equipped with GPU and install GPU drivers simultaneously
 2. Connect remotely to the GPU instance and access the machine terminal
 3. Install Docker environment and NVIDIA Container Toolkit
 ```shell
-curl -fsSL https://your-domain.com/install_docker_aliyun.sh | sudo bash  
-https://github.com/alibaba/ROLL/blob/main/examples/quick_start/install_docker_nvidia_container_toolkit.sh  
+curl -fsSL https://github.com/alibaba/ROLL/blob/main/scripts/install_docker_nvidia_container_toolkit.sh  | sudo bash   
 ```
 
 ## Environment Configuration
 ```shell
-# 1. Pull Docker image
-sudo docker pull <image_address>
-
 # Image Addresses (choose based on your needs)
 # torch2.6.0 + SGlang0.4.6: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-sglang046
 # torch2.6.0 + vLLM0.8.4: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch260-vllm084
 # torch2.5.1 + SGlang0.4.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-sglang043
 # torch2.5.1 + vLLM0.7.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-vllm073
 
-# 2. Start a Docker container with GPU support, expose the port, and keep the container running
-sudo docker images
+# 1. Choose an image based on your needs and start a Docker container with GPU support, expose the port, and keep the container running
 sudo docker run -dit \
   --gpus all \
   -p 9001:22 \
@@ -30,31 +25,25 @@ sudo docker run -dit \
   <image_id> \
   /bin/bash
 
-# 3. Enter the Docker container (execute this command every time you reconnect)
+# 2. Enter the Docker container
+#    You can find your running container's ID or name using `sudo docker ps`.
 sudo docker ps
 sudo docker exec -it <container_id> /bin/bash
 
-# 4. Verify GPU visibility
+# 3. Verify GPU visibility
 nvidia-smi
 
-# 5. Download the code
-
-# Install git（this image is ubuntu-based）and clone the repo
-apt update && apt install git -y
+# 4. Clone the project repo
 git clone https://github.com/alibaba/ROLL.git
 
-# If Github is not accessible, download the zip file directly and unzip
-wget https://github.com/alibaba/ROLL/archive/refs/heads/main.zip
-unzip main.zip
-
 # 5. Install dependencies (select the requirements file corresponding to your chosen image)
-cd ROLL-main
+cd ROLL
 pip install -r requirements_torch260_sglang.txt -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
 ## Pipeline Execution
 ```shell
-bash examples/quick_start/run_agentic_pipeline_frozen_lake_single_node_demo.sh  
+bash examples/agentic_demo/run_agentic_pipeline_frozen_lake_single_node_demo.sh  
 ```
 
 Example Log Screenshots during Pipeline Execution:
