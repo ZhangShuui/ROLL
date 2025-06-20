@@ -24,9 +24,9 @@ sudo docker pull <image_address>
 sudo docker images
 sudo docker run -dit \
   --gpus all \
-  --network=host \
+  -p 9001:22 \
   --ipc=host \
-  --shm-size=2gb \
+  --shm-size=10gb \
   <image_id> \
   /bin/bash
 
