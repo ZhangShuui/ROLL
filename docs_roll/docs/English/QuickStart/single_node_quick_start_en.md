@@ -1,35 +1,13 @@
-# Quickstart: Singel Node based on Alibaba Cloud
+# Quickstart: Singel Node Deployment Guide
 
 ## Environment Preparation
-1. Purchase an Alibaba Cloud Server
-- For a single-machine setup, consider a GPU instance with **NVIDIA V100**.
-- **Recommendation:** When purchasing a GPU instance via the ECS console, it's advised to select the option to automatically install GPU drivers.
-2. Remote Connect to the GPU Instance and access the machine terminal
-3. Install NVIDIA Container Toolkit
+1. Purchase a machine and install GPU drivers simultaneously
+2. Connect remotely to the GPU instance and access the machine terminal
+3. Install Docker environment and NVIDIA Container Toolkit
 ```shell
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \
-  sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo
-  
-sudo yum install -y nvidia-container-toolkit
+curl -fsSL https://your-domain.com/install_docker_aliyun.sh | sudo bash  
+https://github.com/alibaba/ROLL/blob/main/examples/quick_start/install_docker_nvidia_container_toolkit.sh  
 ```
-4. Install Docker Environment：refer to https://developer.aliyun.com/mirror/docker-ce/
-```shell
-# step 1: install necessary system tools
-sudo yum install -y yum-utils
-
-# Step 2: add software repository information
-sudo yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-
-# Step 3: install Docker
-sudo yum install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# Step 4: start Docker service
-sudo service docker start
-
-# Verify that GPUs are visible
-docker version
-```
-
 
 ## Environment Configuration
 ```shell
@@ -42,7 +20,7 @@ sudo docker pull <image_address>
 # torch2.5.1 + SGlang0.4.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-sglang043
 # torch2.5.1 + vLLM0.7.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-vllm073
 
-# 2. Start a Docker container with GPU support and keep the container running
+# 2. Start a Docker container with GPU support, expose the port, and keep the container running
 sudo docker images
 sudo docker run -dit \
   --gpus all \
@@ -65,7 +43,7 @@ nvidia-smi
 apt update && apt install git -y
 git clone https://github.com/alibaba/ROLL.git
 
-# If Github is not accessible, download the zip file and unzip it
+# If Github is not accessible, download the zip file directly and unzip
 wget https://github.com/alibaba/ROLL/archive/refs/heads/main.zip
 unzip main.zip
 
@@ -76,20 +54,18 @@ pip install -r requirements_torch260_sglang.txt -i https://mirrors.aliyun.com/py
 
 ## Pipeline Execution
 ```shell
-# If you encounter "ModuleNotFoundError: No module named 'roll'", you need to add environment variables
-export PYTHONPATH="/workspace/ROLL-main:$PYTHONPATH"
-
-# Method 1: Specify the YAML file path, with the script directory (examples) as the root
-python examples/start_agentic_pipeline.py --config_path qwen2.5-0.5B-agentic_ds  --config_name agent_val_frozen_lake
-
-# Method 2: Execute the shell script directly
-bash examples/qwen2.5-0.5B-agentic_ds/run_agentic_pipeline_frozen_lake.sh
-
-# Modify the configuration as needed
-vim examples/qwen2.5-0.5B-agentic_ds/agent_val_frozen_lake.yaml
+bash examples/quick_start/run_agentic_pipeline_frozen_lake_single_node_demo.sh  
 ```
 
-Key Configuration Modifications for Single V100 GPU Memory:
+Example Log Screenshots during Pipeline Execution:
+![log1](../../../static/img/log_1.png)
+
+![log2](../../../static/img/log_2.png)
+
+![log3](../../../static/img/log_3.png)
+
+
+## Reference: V100 Single-GPU Memory Configuration Optimization
 ```yaml
 # Reduce the system's expected number of GPUs from 8 to your actual 1 V100
 num_gpus_per_node: 1 
@@ -135,11 +111,3 @@ val_env_manager.tags: [SimpleSokoban, FrozenLake]
 # Reduce the total number of training steps for quicker full pipeline runs, useful for rapid debugging.
 max_steps: 100
 ```
-
-Example Log Screenshots during Pipeline Execution:
-![log1](../../../static/img/log_1.png)
-
-![log2](../../../static/img/log_2.png)
-
-![log3](../../../static/img/log_3.png)
-

@@ -1,37 +1,13 @@
-# 快速上手：阿里云单机版部署指南
+# 快速上手：单机版部署指南
 
 ## 准备环境
-1. 购买阿里云服务器
-- 单机版本 可选择 GPU：NVIDIA V100
-- 建议您通过ECS控制台购买GPU实例时，同步选中安装GPU驱动
+1. 购买机器，并同步安装GPU驱动
 2. 远程连接GPU实例，进入机器终端
-3. 安装 NVIDIA容器工具包
+3. 安装 Docker环境 和 NVIDIA容器工具包
 ```shell
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \
-  sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo
-  
-# 安装 NVIDIA Container Toolkit 软件包
-sudo yum install -y nvidia-container-toolkit
-
+curl -fsSL https://your-domain.com/install_docker_aliyun.sh | sudo bash
+https://github.com/alibaba/ROLL/blob/main/examples/quick_start/install_docker_nvidia_container_toolkit.sh
 ```
-4. 安装 Docker 环境：参考 https://developer.aliyun.com/mirror/docker-ce/
-```shell
-# step 1: 安装必要的一些系统工具
-sudo yum install -y yum-utils
-
-# Step 2: 添加软件源信息
-sudo yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-
-# Step 3: 安装Docker
-sudo yum install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# Step 4: 开启Docker服务
-sudo service docker start
-
-# 安装校验
-docker version
-```
-
 
 ## 环境配置
 ```shell
@@ -44,13 +20,13 @@ sudo docker pull <image_address>
 # torch2.5.1 + SGlang0.4.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-sglang043
 # torch2.5.1 + vLLM0.7.3: roll-registry.cn-hangzhou.cr.aliyuncs.com/roll/pytorch:nvcr-24.05-py3-torch251-vllm073
 
-# 2. 启动一个docker容器，指定GPU支持，并始终保持容器运行
+# 2. 启动一个docker容器，指定GPU支持，暴露容器端口，并始终保持容器运行
 sudo docker images
 sudo docker run -dit \
   --gpus all \
-  --network=host \
+  -p 9001:22 \
   --ipc=host \
-  --shm-size=2gb \
+  --shm-size=10gb \
   <image_id> \
   /bin/bash
 
@@ -78,20 +54,18 @@ pip install -r requirements_torch260_sglang.txt -i https://mirrors.aliyun.com/py
 
 ## pipeline运行
 ```shell
-# 若执行报错 ModuleNotFoundError: No module named 'roll'，需要添加环境变量
-export PYTHONPATH="/workspace/ROLL-main:$PYTHONPATH"
-
-# 方法一：指定yaml文件路径，需要以脚本目录即examples为根目录
-python examples/start_agentic_pipeline.py --config_path qwen2.5-0.5B-agentic_ds  --config_name agent_val_frozen_lake
-
-# 方法二：直接执行sh脚本
-bash examples/qwen2.5-0.5B-agentic_ds/run_agentic_pipeline_frozen_lake.sh
-
-# 根据需要修改config
-vim examples/qwen2.5-0.5B-agentic_ds/agent_val_frozen_lake.yaml
+bash examples/quick_start/run_agentic_pipeline_frozen_lake_single_node_demo.sh
 ```
 
-单卡V100显存config修改要点：
+pipeline运行中的log截图示例：
+![log1](../../../static/img/log_1.png)
+
+![log2](../../../static/img/log_2.png)
+
+![log3](../../../static/img/log_3.png)
+
+
+## 参考：单卡V100显存 config修改要点
 ```yaml
 # 将系统预期的GPU数量从8块减少到你实际拥有的1块V100
 num_gpus_per_node: 1 
@@ -138,10 +112,5 @@ val_env_manager.tags: [SimpleSokoban, FrozenLake]
 max_steps: 100
 ```
 
-pipeline运行中的log截图示例：
-![log1](../../../static/img/log_1.png)
 
-![log2](../../../static/img/log_2.png)
-
-![log3](../../../static/img/log_3.png)
 
