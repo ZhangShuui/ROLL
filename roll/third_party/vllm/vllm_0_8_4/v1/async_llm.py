@@ -70,9 +70,9 @@ class AsyncLLM084(AsyncLLM):
     def load_states(self):
         self.collective_rpc(method="load_states")
 
-    def offload_states(self, level=2):
+    def offload_states(self, level=1):
         self.reset_prefix_cache()
-        self.collective_rpc(method="offload_states")
+        self.collective_rpc(method="offload_states", args=(level,))
 
     # 参数同步接口
     def setup_collective_group(self, *args, **kwargs):

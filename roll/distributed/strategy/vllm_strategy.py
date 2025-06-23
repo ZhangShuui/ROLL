@@ -48,6 +48,7 @@ class VllmStrategy(InferenceStrategy):
         vllm_config = copy.deepcopy(self.worker_config.strategy_args.strategy_config)
         engine_mode = vllm_config.pop("engine_mode", "sync")  # sync/async
         self.pending_size = vllm_config.pop("pending_size", 1)
+        self.sleep_level = vllm_config.pop("sleep_level", 1)
         self.command_queue = queue.Queue()
 
         if self.worker_config.model_args.dtype == "fp32":
@@ -237,7 +238,7 @@ class VllmStrategy(InferenceStrategy):
 
     def offload_states(self, include=None, non_blocking=False):
         if include is None or OffloadStateType.model_params in include:
-            self.model.offload_states()
+            self.model.offload_states(self.sleep_level)
         self.recv_manager.clear()
         gc.collect()
         torch.cuda.empty_cache()

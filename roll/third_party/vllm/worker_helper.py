@@ -14,11 +14,15 @@ logger = get_logger()
 
 
 class WorkerHelper:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.weight_loaded : bool = True
+        self.kv_cache_loaded : bool = True
 
     def reload_model(self):
-        if not self.model_runner.model:
-            self.model_runner.model_config.load_format = "dummy"
-            self.model_runner.load_model()
+        if not self.weight_loaded:
+            self.wake_up(["weights"])
+            self.weight_loaded = True
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         # before updating the parameters, we need to reinitialize the previously released model
@@ -28,12 +32,17 @@ class WorkerHelper:
 
     def load_states(self):
         self.reload_model()
-        self.model_runner.model.to('cuda')
+        if not self.kv_cache_loaded:
+            self.wake_up(["kv_cache"])
+            self.kv_cache_loaded = True
 
-    def offload_states(self):
-        self.model_runner.model.to('cpu')
-        self.cache_engine = None
-        self.gpu_cache = None
+    def offload_states(self, level):
+        assert (self.weight_loaded and self.kv_cache_loaded) or (not self.weight_loaded and not self.kv_cache_loaded)
+        if not self.weight_loaded:
+            return
+        self.sleep(level)
+        self.weight_loaded = False
+        self.kv_cache_loaded = False
         if hasattr(self, 'recv_manager'):
             self.recv_manager.clear()
         gc.collect()
