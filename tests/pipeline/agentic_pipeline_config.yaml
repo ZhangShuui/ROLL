@@ -28,6 +28,18 @@ system_envs:
 #    - agentic
 #    - debug
 
+#track_with: swanlab
+#tracker_kwargs:
+#  login_kwargs:
+#    api_key: your_api_key
+#  project: roll-agentic
+#  logdir: debug
+#  experiment_name: roll-agentic-examples
+#  tags:
+#    - roll
+#    - agentic
+#    - debug
+
 num_gpus_per_node: 8
 
 max_steps: 1024
