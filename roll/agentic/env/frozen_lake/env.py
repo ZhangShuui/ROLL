@@ -46,7 +46,7 @@ class FrozenLakeEnv(BaseDiscreteActionEnv, GymFrozenLakeEnv):
 
         return next_obs, reward, done, info
 
-    def render(self, mode: str = "text"):
+    def render(self, mode=None):
         if not mode:
             mode = self.render_mode
         if mode == "text":

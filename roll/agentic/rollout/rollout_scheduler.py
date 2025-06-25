@@ -24,7 +24,7 @@ logger = get_logger()
 
 
 class RolloutScheduler:
-    def __init__(self, config, env_manager_config: EnvManagerConfig, resource_manager, infer_cluster, mode):
+    def __init__(self, config, env_manager_config: EnvManagerConfig, resource_manager, infer_cluster, mode, collator=None):
         self.config = config
         self.env_manager_config = env_manager_config
         self.env_nums = self.env_manager_config.env_groups * self.env_manager_config.group_size
@@ -50,6 +50,7 @@ class RolloutScheduler:
             generate_scheduler=self.generate_scheduler,
             input_queue=self.env_input_queue,
             output_queue=self.env_output_queue,
+            collator=collator,
             mode=self.mode,
         )
         self.group_size = self.es_manager.worker_config.group_size

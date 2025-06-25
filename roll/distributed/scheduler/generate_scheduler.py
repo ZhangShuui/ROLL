@@ -147,7 +147,14 @@ class GenerateScheduler:
                 prompt_ids = data.batch["prompt_id"]
                 input_ids = input_ids.repeat(num_return_sequences, 1)
                 attention_mask = attention_mask.repeat(num_return_sequences, 1)
-                position_ids = position_ids.repeat(num_return_sequences, 1)
+                if position_ids.dim() == 3:  # (bsz, 3, seqlen)
+                    position_ids = position_ids.repeat(num_return_sequences, 1, 1)
+                    non_tensor_batch = dict(
+                        (k, np.tile(v, num_return_sequences))
+                        for k, v in data.non_tensor_batch.items())
+                else:
+                    position_ids = position_ids.repeat(num_return_sequences, 1)
+                    non_tensor_batch = {}
                 prompt_ids = prompt_ids.unsqueeze(-1).repeat(num_return_sequences, 1)
 
                 data = DataProto(
@@ -160,6 +167,7 @@ class GenerateScheduler:
                         },
                         batch_size=output_batch_size,
                     ),
+                    non_tensor_batch=non_tensor_batch,
                     meta_info=data.meta_info,
                 )
             self.is_completed = False

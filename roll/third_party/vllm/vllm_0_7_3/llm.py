@@ -1,6 +1,6 @@
 import os
 from typing import Iterable, Tuple, List, Dict, Type, Optional, Union, Any
-import time 
+import time
 import torch
 import cloudpickle
 from vllm import LLM, SamplingParams, EngineArgs, LLMEngine, envs
@@ -128,13 +128,35 @@ class Llm073(LLM):
                 output_list.append(request_output)
         return output_list
 
-    def add_requests(self, prompt_token_ids: List[List[int]], request_ids: List[int] | None, sampling_params: SamplingParams):
+    def add_requests(self, prompt_token_ids: List[List[int]],
+                     request_ids: List[int] | None,
+                     sampling_params: SamplingParams,
+                     multi_modal_data: List[int] | None):
         assert len(prompt_token_ids) == len(request_ids)
-        for token_ids, request_id in zip(prompt_token_ids, request_ids):
+        if multi_modal_data:
+            assert len(multi_modal_data) == len(request_ids)
+        for i, (token_ids, request_id)in enumerate(zip(prompt_token_ids, request_ids)):
             if request_id is None:
                 request_id = next(self.request_counter)
+            if multi_modal_data:
+                preprocessed_inputs = self.llm_engine.input_preprocessor.preprocess(
+                    prompt={
+                        "prompt_token_ids": token_ids,
+                        "multi_modal_data": multi_modal_data[i]
+                    },
+                    request_id=request_id,
+                    lora_request=None,
+                    prompt_adapter_request=None,
+                )
+                processed_inputs = self.llm_engine.input_processor(
+                    preprocessed_inputs)
+            else:
+                processed_inputs = {
+                    "type": "token",
+                    "prompt_token_ids": token_ids
+                }
             self.llm_engine._add_processed_request(request_id=request_id,
-                                                   processed_inputs={"type": "token", "prompt_token_ids": token_ids},
+                                                   processed_inputs=processed_inputs,
                                                    params=sampling_params,
                                                    arrival_time=time.time(),
                                                    lora_request=None,

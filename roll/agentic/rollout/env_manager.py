@@ -14,7 +14,7 @@ import torch
 from fsspec.utils import nullcontext
 from ray.util.queue import Queue, Empty
 from tensordict import TensorDict
-from transformers import AutoTokenizer, PreTrainedTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizer, ProcessorMixin
 
 from roll.agentic.env import REGISTERED_ENVS, REGISTERED_ENV_CONFIGS
 from roll.distributed.scheduler.generate_scheduler import GlobalCounter, RequestScheduler
@@ -110,6 +110,8 @@ class EnvManager:
                  input_queue: Queue,
                  output_queue: Queue,
                  thread_lock: Lock,
+                 processor: Optional[ProcessorMixin] = None,
+                 collator: Optional[callable] = None,
                  mode='train'):
         """
         1. 一个EnvManager持有一个env实例: 执行env.reset, env.step, 管理rollout的状态
@@ -125,6 +127,8 @@ class EnvManager:
         self.pipeline_config = pipeline_config
         self.env_config: Dict = env_config
         self.tokenizer: PreTrainedTokenizer = tokenizer
+        self.processor: ProcessorMixin = processor
+        self.collator = collator
         self.env_entry = None
         self.output_queue = output_queue
         self.input_queue = input_queue
@@ -218,7 +222,10 @@ class EnvManager:
                         f"maybe you should increase the response_length")
             return None
 
-        gen_batch = lm_input.pop(batch_keys=["input_ids", "attention_mask", "position_ids"])
+        gen_batch = lm_input.pop(
+            batch_keys=["input_ids", "attention_mask", "position_ids"],
+            non_tensor_batch_keys=(["multi_modal_data"] if "multi_modal_data"
+                                   in lm_input.non_tensor_batch else []))
         gen_batch.meta_info["generation_config"] = generation_config
         gen_batch.meta_info['response_callback_fn'] = self.generate_scheduler.report_response.remote
         self.request_id = str(ray.get(self.request_counter.get_value.remote()))
@@ -322,25 +329,43 @@ class EnvManager:
 
     def get_lm_input(self, env_output, prepare_for_update: bool) -> DataProto:
         """"""
-        llm_input_texts, messages_list = self._format_messages(env_output=env_output, prepare_for_update=prepare_for_update,
-                                                         use_raw_llm_response=False)
-        inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left",
-                                truncation=False)
-        # (bsz, seq_len), bsz=1
-        input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
-        position_ids = attention_mask.cumsum(dim=-1)
-        llm_inputs = DataProto()
-        llm_inputs.batch = TensorDict({
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids,
-        }, batch_size=input_ids.shape[0])
-        llm_inputs.non_tensor_batch = {
+        llm_input_texts, messages_list, llm_input_images = self._format_messages(
+            env_output=env_output,
+            prepare_for_update=prepare_for_update,
+            use_raw_llm_response=False)
+        if llm_input_images and any(env_images for env_images in llm_input_images):
+            assert self.collator, "requires collator for multi-modal data"
+        if self.collator:
+            # TODO: collator and image are coupled, fix it
+            # assume the collator has these attributes
+            prompt_key, image_key, image_flag_key = self.collator.prompt_key, self.collator.image_key, self.collator.image_flag_key
+            features = [{
+                prompt_key: text,
+                image_key: image,
+                image_flag_key: True if image else False
+            } for text, image in zip(llm_input_texts, llm_input_images)]
+            inputs = self.collator(features)
+            llm_inputs: DataProto = DataProto.from_single_dict(inputs)
+            input_ids, attention_mask, position_ids = llm_inputs.batch[
+                "input_ids"], llm_inputs.batch[
+                    "attention_mask"], llm_inputs.batch["position_ids"]
+        else:
+            inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left",
+                                    truncation=False)  # do not truncate here. Process later at TODO
+            input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
+            position_ids = attention_mask.cumsum(dim=-1)
+            llm_inputs = DataProto()
+            llm_inputs.batch = TensorDict({
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+            }, batch_size=input_ids.shape[0])
+        llm_inputs.non_tensor_batch.update({
             "env_ids": np.array([env_output["env_id"]], dtype=object),
             "group_ids": np.array([env_output["group_id"]], dtype=object),
             "messages_list": np.array(messages_list, dtype=object),
             "tags": np.array([env_output["tag"]], dtype=object),
-        }
+        })
         return llm_inputs
 
     def get_env_input(self, lm_output: DataProto) -> Dict:
@@ -371,12 +396,40 @@ class EnvManager:
         2. 每个rollout 应该是一个List[Dict]
         3. 每个Dict 应该是一个step的信息
         """
-        llm_input_texts, messages_list = self._format_messages(env_output=self.rollout_cache,
-                                                               prepare_for_update=True,
-                                                               use_raw_llm_response=False)
-        inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left",
-                                truncation=False)
-        input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
+        llm_input_texts, messages_list, llm_input_images = self._format_messages(
+            env_output=self.rollout_cache,
+            prepare_for_update=True,
+            use_raw_llm_response=False)
+        has_images = False
+        if any(env_images for env_images in llm_input_images):
+            has_images = True
+            assert self.collator, "requires collator for multi-modal data"
+        if self.collator:
+            # assume the collator has these attributes
+            prompt_key, image_key, image_flag_key = self.collator.prompt_key, self.collator.image_key, self.collator.image_flag_key
+            features = [{
+                prompt_key: text,
+                image_key: image,
+                image_flag_key: True if image else False
+            } for text, image in zip(llm_input_texts, llm_input_images)]
+            inputs = self.collator(features)
+            llm_inputs: DataProto = DataProto.from_single_dict(inputs)
+            input_ids, attention_mask, position_ids = llm_inputs.batch[
+                "input_ids"], llm_inputs.batch[
+                    "attention_mask"], llm_inputs.batch["position_ids"]
+        else:
+            inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left",
+                                    truncation=False)
+            input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
+            position_ids = attention_mask.cumsum(dim=-1)
+            llm_inputs = DataProto()
+            llm_inputs.batch = TensorDict(
+                {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "position_ids": position_ids,
+                },
+                batch_size=input_ids.shape[0])
         scores = [[i['reward'] for i in self.rollout_cache['history']]]
         episode_scores = [sum(i) for i in scores]
         penalty = self.rollout_cache['penalty']
@@ -389,25 +442,24 @@ class EnvManager:
         response_length = response_mask.sum(dim=-1).float().mean().item()
         input_ids = pad_to_length(input_ids, length=self.pipeline_config.sequence_length, pad_value=self.tokenizer.pad_token_id)
         attention_mask = pad_to_length(attention_mask, length=self.pipeline_config.sequence_length, pad_value=0)
+        position_ids = pad_to_length(position_ids, length=self.pipeline_config.sequence_length, pad_value=0)
         response_mask = pad_to_length(response_mask, length=self.pipeline_config.sequence_length, pad_value=0)
         non_prompt_mask = pad_to_length(non_prompt_mask, length=self.pipeline_config.sequence_length, pad_value=0)
         score_tensor = pad_to_length(score_tensor, length=self.pipeline_config.sequence_length, pad_value=0)
 
-        position_ids = attention_mask.cumsum(dim=-1)
-        llm_inputs = DataProto()
-        llm_inputs.batch = TensorDict({
+        llm_inputs.batch.update({
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
             "penalty": torch.Tensor([penalty]),
-        }, batch_size=input_ids.shape[0])
-        llm_inputs.non_tensor_batch = {
+        })
+        llm_inputs.non_tensor_batch.update({
             "env_ids": np.array([self.rollout_cache["env_id"]], dtype=object),
             "group_ids": np.array([self.rollout_cache["group_id"]], dtype=object),
             "messages_list": np.array(messages_list, dtype=object),
             "tags": np.array([self.rollout_cache["tag"]], dtype=object),
             "frames": np.array([self.rollout_cache["frames"]], dtype=object),
-        }
+        })
         # pad to response length
         llm_inputs.batch["llm_response_mask"] = response_mask
         llm_inputs.batch["non_prompt_mask"] = non_prompt_mask
@@ -424,7 +476,7 @@ class EnvManager:
         llm_inputs.batch["prompt_mask"] = prompt_mask
         llm_inputs.batch["scores"] = score_tensor
         # for llm raw response
-        llm_raw_text_list, _ = self._format_messages(env_output=self.rollout_cache, prepare_for_update=True, use_raw_llm_response=True)
+        llm_raw_text_list, _, _ = self._format_messages(env_output=self.rollout_cache, prepare_for_update=True, use_raw_llm_response=True)
         llm_inputs.non_tensor_batch['turn_scores'] = np.array(scores, dtype=object)
         llm_inputs.non_tensor_batch['episode_scores'] = np.array(episode_scores, dtype=object)
         llm_inputs.non_tensor_batch['llm_raw_text_list'] = np.array(llm_raw_text_list, dtype=object)
@@ -453,6 +505,9 @@ class EnvManager:
         env_metric["env/response_length"] = response_length
         self.rollout_cache['metrics'] = env_metric
         llm_inputs.meta_info = {"metrics": env_metric}
+        if has_images:
+            # TODO: maybe make this field be list of str for specific features
+            llm_inputs.meta_info["_broadcast_non_tensor_batch"] = True
         return llm_inputs
 
 
@@ -532,23 +587,59 @@ class EnvManager:
             env_output['history'] = env_output['history'][
                                     :-1]  # when prepare for update, we do not add the state from the n+1 turn to the trajectory
 
+        # TODO: allow window_size, allow env specific system_prompt,
+        # allow specific prompt_format
+        # TODO: maybe use image placeholder from result of env.step to
+        # unify with and without image, while this requires to simulate
+        # processor manually
+        env_images = [] if "state" in env_output["history"][
+            0] and "images" in env_output["history"][0] else None
+        # for multi-modal, content is list of dict
+        first_user_content = [{
+            "type": "text",
+            "text": self.prefix_lookup[env_output["env_id"]],
+        }] if env_images is not None else self.prefix_lookup[
+            env_output["env_id"]]
         messages = [
-            {"role": "system",
-             "content": f"You're a helpful assistant. You are a good game player. You are aiming to get high reward in the game."},
-            {"role": "user", "content": self.prefix_lookup[env_output["env_id"]]}
+            {"role": "system", "content": f"You're a helpful assistant. You are a good game player. You are aiming to get high reward in the game."},
+            {"role": "user", "content": first_user_content}
         ]
 
         for idx, content in enumerate(env_output["history"]):
-            messages[-1]["content"] += f"\nTurn {idx + 1}:\n"
+            turn_idx_content = [{
+                "type": "text",
+                "text": f"\nTurn {idx + 1}:\n"
+            }] if env_images is not None else f"\nTurn {idx + 1}:\n"
+            # assume the role of messages[-1] be user, this may not be
+            # right if reward not in history content
+            # TODO: support if messages[-1] is not user
+            messages[-1]["content"] += turn_idx_content
             if "state" in content:
                 FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.pipeline_config.enable_think else "<answer> [your answer] </answer>"
                 LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
-                messages[-1]["content"] += (
-                    f"State:\n{content['state']}\nYou have {content['actions_left']} actions left. "
-                    f"Always output: {FORMAT_PROMPT} with no extra text, strictly follow this format.\n"
-                    f"History response that do not follow the format will be set as 'INVALID'\n"
-                    f"{LENGTH_PROMPT}\n"
-                    f"Decide the next action:\n")
+                if env_images is not None:
+                    messages[-1]["content"] += [{
+                        "type": "text",
+                        "text": "State:\n"
+                    }, {
+                        "type": "image",
+                    }, {
+                        "type":
+                        "text",
+                        "text":
+                        (f"\nYou have {content['actions_left']} actions left. "
+                         f"Always output: {FORMAT_PROMPT} with no extra text."
+                         f"Strictly follow this format, history response that do not follow the format will be set as 'INVALID'. {LENGTH_PROMPT}\n"
+                         f"Decide the next action:\n")
+                    }]
+                    # ex_manager returns list of images for mm
+                    env_images.extend(content["images"])
+                else:
+                    messages[-1]["content"] += (
+                        f"State:\n{content['state']}\nYou have {content['actions_left']} actions left. "
+                        f"Always output: {FORMAT_PROMPT} with no extra text."
+                        f"Strictly follow this format, history response that do not follow the format will be set as 'INVALID'. {LENGTH_PROMPT}\n"
+                        f"Decide the next action:\n")
             if "llm_raw_response" in content:
                 #       改成actions合理吗？
                 messages.append({"role": "assistant",
@@ -556,16 +647,41 @@ class EnvManager:
                                      "llm_raw_response"]})
             if "reward" in content and not (prepare_for_update and idx == len(env_output["history"]) - 1):
                 # when prepare for update, we do not add the reward from the n+1 turn to the trajectory
-                messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
+                reward_content = [
+                    {
+                        "type": "text",
+                        "text": f"Reward:\n{content['reward']}\n"
+                    }
+                ] if env_images is not None else f"Reward:\n{content['reward']}\n"
+                messages.append({"role": "user", "content": reward_content})
 
         # NOTE: this assertion is important for loss mask computation
         assert all(msg["role"] == "assistant" for msg in messages[2::2])
 
-        text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=(not prepare_for_update),
-                                                  tokenize=False)
+        if self.processor:
+            # processor.chat_template might be different with tokenizer
+            # can also set tokenizer.chat_template to processor.chat_template
+            text = self.processor.apply_chat_template(
+                messages,
+                add_generation_prompt=(not prepare_for_update),
+                tokenize=False)
+        else:
+            text = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=(not prepare_for_update),
+                tokenize=False)
         if use_raw_llm_response:
             prompt_messages = messages[:2]
-            prompt_text = self.tokenizer.apply_chat_template(prompt_messages, add_generation_prompt=False, tokenize=False)
+            if self.processor:
+                prompt_text = self.processor.apply_chat_template(
+                    prompt_messages,
+                    add_generation_prompt=False,
+                    tokenize=False)
+            else:
+                prompt_text = self.tokenizer.apply_chat_template(
+                    prompt_messages,
+                    add_generation_prompt=False,
+                    tokenize=False)
             text = text[len(prompt_text):]
         if not prepare_for_update:
             if self.pipeline_config.enable_think:
@@ -576,7 +692,7 @@ class EnvManager:
         # TODO: 应该没有必要，注意处理mask
         # TODO: special tokens add to config
         text = text.replace("<|im_end|>\n", "<|im_end|>")
-        return [text], [messages]
+        return [text], [messages], [env_images]
 
 
     def _parse_response(self, response: str) -> List:

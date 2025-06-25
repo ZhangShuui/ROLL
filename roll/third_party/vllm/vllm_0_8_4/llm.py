@@ -147,13 +147,41 @@ class Llm084(LLM):
         stats = self.llm_engine._get_stats(scheduler_outputs=None)
         return stats.num_waiting_sys
 
-    def add_requests(self, prompt_token_ids: List[List[int]], request_ids: List[int] | None, sampling_params: SamplingParams):
+    def add_requests(
+        self,
+        prompt_token_ids: List[List[int]],
+        request_ids: List[int] | None,
+        sampling_params: SamplingParams,
+        multi_modal_data: List[int] | None,
+    ):
         assert len(prompt_token_ids) == len(request_ids)
-        for token_ids, request_id in zip(prompt_token_ids, request_ids):
+        if multi_modal_data:
+            assert len(multi_modal_data) == len(request_ids)
+        for i, (token_ids, request_id)in enumerate(zip(prompt_token_ids, request_ids)):
             if request_id is None:
                 request_id = next(self.request_counter)
+            if multi_modal_data:
+                # in v1, input_preprocessor is in engine.processor
+                processor = getattr(self.llm_engine, "processor", None)
+                input_preprocessor = processor.input_preprocessor if processor else self.llm_engine.input_preprocessor
+                preprocessed_inputs = input_preprocessor.preprocess(
+                    prompt={"prompt_token_ids": token_ids, "multi_modal_data": multi_modal_data[i]},
+                    lora_request=None,
+                    prompt_adapter_request=None,
+                )
+                 # in v1, engine does not use a input_processor
+                processed_inputs = (
+                    self.llm_engine.input_processor(preprocessed_inputs)
+                    if hasattr(self.llm_engine, "input_processor")
+                    else preprocessed_inputs
+                )
+            else:
+                processed_inputs = {
+                    "type": "token",
+                    "prompt_token_ids": token_ids
+                }
             self.llm_engine._add_processed_request(request_id=request_id,
-                                                   processed_inputs={"type": "token", "prompt_token_ids": token_ids},
+                                                   processed_inputs=processed_inputs,
                                                    params=sampling_params,
                                                    arrival_time=time.time(),
                                                    lora_request=None,

@@ -69,8 +69,8 @@ class DataCollatorWithPaddingForPaddedKeys:
 
 @dataclass
 class DataCollatorWithPaddingForMM:
-    tokenizer: PreTrainedTokenizerBase
-    processor: ProcessorMixin
+    tokenizer: Optional[PreTrainedTokenizerBase] = None
+    processor: Optional[ProcessorMixin] = None
     extra_data_provider: Optional[callable] = None
     prompt_key: str = "prompt"
     answer_key: Optional[str] = "ground_truth"
@@ -83,6 +83,7 @@ class DataCollatorWithPaddingForMM:
     return_tensors: str = "pt"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        assert self.tokenizer and self.processor
         # model_inputs for hf/deepspeed: input_id, attention_mask, pixel_values, image_grid_thw
         padded_features = defaultdict(list)
         un_padded_features = defaultdict(list)
@@ -93,7 +94,9 @@ class DataCollatorWithPaddingForMM:
             # requires all data fields has same batch size
             # if image is None, model_inputs would not inlcude image feature field
             model_inputs: BatchFeature = self.processor(
-                images=feature[self.image_key] if self.image_key and feature[self.image_flag_key] else None,
+                images=feature[self.image_key]
+                if self.image_key and (not self.image_flag_key or feature[self.image_flag_key])
+                else None,
                 text=feature[self.prompt_key],
             )
             for key in filter(lambda k: k in model_inputs, self.padded_keys):
@@ -113,15 +116,20 @@ class DataCollatorWithPaddingForMM:
                     {
                         "prompt_token_ids":  # different with input_ids
                         self.tokenizer.encode(feature[self.prompt_key], add_special_tokens=False),
-                        "multi_modal_data": {"image": [feature[self.image_key]]},
+                        "multi_modal_data": {
+                            "image": [feature[self.image_key]]
+                            if not isinstance(feature[self.image_key], list)
+                            else feature[self.image_key]
+                        },
                     }
-                    if feature[self.image_flag_key]
+                    if not self.image_flag_key or feature[self.image_flag_key]
                     else {
                         "prompt_token_ids":  # different with input_ids
                         self.tokenizer.encode(feature[self.prompt_key], add_special_tokens=False),
                     }
                 )
-            un_padded_features[self.answer_key].append(feature[self.answer_key])
+            if self.answer_key:
+                un_padded_features[self.answer_key].append(feature[self.answer_key])
 
         batch = pad_without_fast_tokenizer_warning(
             self.tokenizer,

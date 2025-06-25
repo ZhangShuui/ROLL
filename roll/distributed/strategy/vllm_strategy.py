@@ -171,10 +171,22 @@ class VllmStrategy(InferenceStrategy):
                     sampling_params = create_sampling_params_for_vllm(
                         gen_kwargs={**generation_config, "max_new_tokens": max_new_tokens}
                     )
-                    prompt_token_ids = gather_unpadded_input_ids(input_ids=input_ids, attention_mask=attention_mask)
-                    self.model.add_requests(
-                        request_ids=[request_id], prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-                    )
+                    if "multi_modal_data" in batch.non_tensor_batch:
+                        prompt_token_ids = [
+                            batch.non_tensor_batch["multi_modal_data"][0]
+                            ["prompt_token_ids"]
+                        ]
+                        multi_modal_data = [
+                            batch.non_tensor_batch["multi_modal_data"][0]
+                            ["multi_modal_data"]
+                        ]
+                    else:
+                        prompt_token_ids = gather_unpadded_input_ids(input_ids=input_ids, attention_mask=attention_mask)
+                        multi_modal_data = None
+                    self.model.add_requests(request_ids=[request_id],
+                                            prompt_token_ids=prompt_token_ids,
+                                            sampling_params=sampling_params,
+                                            multi_modal_data=multi_modal_data)
                 elif command == GenerateRequestType.ABORT:
                     request_id = batch.meta_info["request_id"]
                     self.model.abort_request(request_id=request_id)

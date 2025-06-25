@@ -11,7 +11,7 @@ from roll.agentic.rollout.env_manager import EnvManager
 from roll.distributed.executor.worker import Worker
 from roll.distributed.scheduler.decorator import Dispatch, register
 from roll.distributed.scheduler.protocol import DataProto
-from roll.models.model_providers import default_tokenizer_provider
+from roll.models.model_providers import default_tokenizer_provider, default_processor_provider
 from roll.pipeline.agentic.agentic_config import EnvManagerConfig
 
 
@@ -41,11 +41,13 @@ class EnvironmentWorker(Worker):
                    generate_scheduler,
                    input_queue: Queue,
                    output_queue: Queue,
+                   collator: Optional[callable] = None,
                    mode: str = "train"):
         super().initialize(pipeline_config)
         self.input_queue = input_queue
         self.output_queue = output_queue
         self.tokenizer = default_tokenizer_provider(model_args=self.worker_config.model_args)
+        self.processor = default_processor_provider(model_args=self.worker_config.model_args)
         for env_id, env_config in self.env_configs.items():
             self.env_managers[env_id] = EnvManager(worker_config=self.worker_config,
                                                    pipeline_config=pipeline_config,
@@ -55,6 +57,8 @@ class EnvironmentWorker(Worker):
                                                    input_queue=input_queue,
                                                    output_queue=output_queue,
                                                    thread_lock=self.thread_lock,
+                                                   processor=copy.deepcopy(self.processor),
+                                                   collator=collator,
                                                    mode=mode)
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
