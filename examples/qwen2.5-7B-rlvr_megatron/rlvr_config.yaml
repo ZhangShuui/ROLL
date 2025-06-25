@@ -233,7 +233,7 @@ rewards:
     judge_model_type: inference
     tag_included: [RLVR]
     model_args:
-      model_name_or_path: AI-ModelScope/Qwen2.5-7B-Instruct-RLVR
+      model_name_or_path: virtuoussy/Qwen2.5-7B-Instruct-RLVR
       flash_attn: fa2
       disable_gradient_checkpointing: true
       dtype: bf16

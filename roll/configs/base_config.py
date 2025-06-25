@@ -136,8 +136,8 @@ class BaseConfig:
                     "Ensure that GPU resource allocation aligns with the request in a multi-node setup."
         }
     )
-    model_download_type: str = field(
-        default="MODELSCOPE",
+    model_download_type: Optional[str] = field(
+        default=None,
         metadata={"help": "snapshot_download func source type, such as MODELSCOPE, HUGGINGFACE_HUB."},
     )
 
@@ -172,7 +172,8 @@ class BaseConfig:
         os.environ["ROLL_LOG_DIR"] = self.logging_dir
         get_logger()
 
-        os.environ["MODEL_DOWNLOAD_TYPE"] = self.model_download_type
+        if self.model_download_type is not None:
+            os.environ["MODEL_DOWNLOAD_TYPE"] = self.model_download_type
 
         upload_type = self.checkpoint_config.get("type", None)
         if upload_type == "file_system":

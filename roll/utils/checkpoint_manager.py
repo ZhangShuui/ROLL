@@ -34,7 +34,7 @@ def download_model(model_name_or_path: str, local_dir: Optional[str] = None):
     if os.path.isdir(model_name_or_path):
         return model_name_or_path
 
-    model_download_type = os.getenv("MODEL_DOWNLOAD_TYPE", "MODELSCOPE")
+    model_download_type = os.getenv("MODEL_DOWNLOAD_TYPE", "HUGGINGFACE_HUB")
     if model_download_type not in model_download_registry:
         raise ValueError(f"Unknown model_download_type: {model_download_type},"
                          f" total registered model download type: {model_download_registry.keys()}")
