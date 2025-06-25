@@ -574,7 +574,7 @@ class GeneralRuleRewardWorker(Worker):
     def initialize(self, pipeline_config):
         pass
 
-    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE)
+    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE, clear_cache=False)
     def compute_rewards(self, data: DataProto):
         """
         仅调用 data.non_tensor_batch['ground_truth'] 中的 “func_name”，

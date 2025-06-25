@@ -556,7 +556,7 @@ class RewardWorker(Worker):
         self.logger.info(f"{self.worker_name} initialized")
         self.strategy.offload_states()
 
-    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE)
+    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE, clear_cache=False)
     def compute_rewards(self, data: DataProto):
         """
         return DataProto.from_dict(tensors={'rewards': rewards})

@@ -200,7 +200,7 @@ class LLMJudgeRewardWorker(Worker):
         }
         return score, info
 
-    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE)
+    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE, clear_cache=False)
     def compute_rewards(self, data: DataProto):
         global_step = data.meta_info.get("global_step", 0)
         is_offload_states = data.meta_info.get("is_offload_states", True)

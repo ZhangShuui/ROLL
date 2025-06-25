@@ -115,7 +115,7 @@ class GeneralValRuleRewardWorker(Worker):
     def initialize(self, pipeline_config):
         pass
 
-    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE)
+    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE, clear_cache=False)
     def compute_rewards(self, data: DataProto):
         response_text_list = self.tokenizer.batch_decode(data.batch["responses"], skip_special_tokens=False)
         batch_size = len(response_text_list)

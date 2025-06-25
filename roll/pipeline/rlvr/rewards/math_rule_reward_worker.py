@@ -135,7 +135,7 @@ class MathRuleRewardWorker(Worker):
     def initialize(self, pipeline_config):
         pass
 
-    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE)
+    @register(dispatch_mode=Dispatch.DP_MP_COMPUTE, clear_cache=False)
     def compute_rewards(self, data: DataProto):
         """
         return DataProto.from_dict(tensors={'rewards': rewards})
