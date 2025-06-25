@@ -5,6 +5,8 @@ from concurrent import futures
 from dataclasses import dataclass
 from typing import Dict
 
+import ray
+
 from roll.configs.worker_config import WorkerConfig
 from roll.distributed.scheduler.decorator import Dispatch, register
 from roll.distributed.scheduler.protocol import DataProto
@@ -37,18 +39,6 @@ class RankInfo:
 
 class Worker:
 
-    def __new__(cls, *args, **kwargs):
-        instance = super().__new__(cls)
-
-        rank = int(os.environ.get("RANK", 0))
-        if rank == 0:
-            master_addr = instance.get_node_ip()
-            master_port = str(instance.get_free_port())
-            os.environ["MASTER_ADDR"] = master_addr
-            os.environ["MASTER_PORT"] = master_port
-
-        return instance
-
     def __init__(self, worker_config: WorkerConfig):
         self.worker_config = worker_config
         self.pipeline_config = None
@@ -57,22 +47,38 @@ class Worker:
         self.rank = int(os.environ.get("RANK", 0))
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
         self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        self.shared_storage = SharedStorage.options(
+            name=STORAGE_NAME, get_if_exists=True, namespace=RAY_NAMESPACE
+        ).remote()
+
+        if self.rank == 0:
+            master_addr = self.get_node_ip()
+            master_port = str(self.get_free_port())
+            max_retry_count = int(os.environ.get("MAX_PORT_RETRY_COUNT", 1000))
+            retry_count = 0
+            while retry_count < max_retry_count:
+                master_port = str(self.get_free_port())
+                master_addr_port_key = f"MASTER_ADDR_PORT:{master_addr}:{master_port}"
+                if ray.get(self.shared_storage.get.remote(master_addr_port_key)) is None:
+                    ray.get(self.shared_storage.put.remote(master_addr_port_key, True))
+                    break
+                retry_count += 1
+            if retry_count >= max_retry_count:
+                raise RuntimeError(f"Can not allocate unique MASTER_PORT on {master_addr}.")
+            os.environ["MASTER_ADDR"] = master_addr
+            os.environ["MASTER_PORT"] = master_port
+
         self.master_addr = os.environ["MASTER_ADDR"]
         self.master_port = int(os.environ["MASTER_PORT"])
-
+        self.shared_storage.put.remote(
+            self.cluster_name, {"MASTER_ADDR": self.master_addr, "MASTER_PORT": self.master_port}
+        )
         # NOTE: 自定义Worker时根据需要配置rank_info
         self.rank_info = RankInfo(
             world_size=self.world_size,
             rank=self.rank,
             dp_rank=self.rank,
             dp_size=self.world_size,
-        )
-
-        self.shared_storage = SharedStorage.options(
-            name=STORAGE_NAME, get_if_exists=True, namespace=RAY_NAMESPACE
-        ).remote()
-        self.shared_storage.put.remote(
-            self.cluster_name, {"MASTER_ADDR": self.master_addr, "MASTER_PORT": self.master_port}
         )
         self.thread_executor: futures.ThreadPoolExecutor = futures.ThreadPoolExecutor(max_workers=5)
         self._logger = None
