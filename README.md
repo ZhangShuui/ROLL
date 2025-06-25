@@ -35,11 +35,12 @@ Leveraging a multi-role distributed architecture with Ray for flexible resource 
 
 ## 📢 News
 
-| 📣   Updates                                                                                                                                   |
-|:-----------------------------------------------------------------------------------------------------------------------------------------------|
-| **[06/13/2025]** Support Qwen2.5 VL rlvr pipeline and upgrade mcore to 0.12 version.                    |
-| **[06/09/2025]** 🎉 ROLL tech report is now available! Access the report [here](https://arxiv.org/abs/2506.06122).                     |
-| **[05/30/2025]** 🎉 Training RLVR and Agentic RL with ROLL is now available! Explore the new capabilities.                                     |
+| 📣   Updates                                                                                                       |
+|:-------------------------------------------------------------------------------------------------------------------|
+| **[06/25/2025]** 🎉 Support thread env for env scaling and support qwen2.5 VL agentic pipeline.                    |
+| **[06/13/2025]** 🎉 Support Qwen2.5 VL rlvr pipeline and upgrade mcore to 0.12 version.                            |
+| **[06/09/2025]** 🎉 ROLL tech report is now available! Access the report [here](https://arxiv.org/abs/2506.06122). |
+| **[05/30/2025]** 🎉 Training RLVR and Agentic RL with ROLL is now available! Explore the new capabilities.         |
 ---
 
 ## 🗺️ Architecture at a Glance
