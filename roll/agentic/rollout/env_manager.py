@@ -2,6 +2,7 @@ import copy
 import re
 import time
 import traceback
+from contextlib import nullcontext
 from dataclasses import dataclass, field, asdict
 from itertools import zip_longest
 from threading import Thread, Lock
@@ -11,7 +12,6 @@ import PIL
 import numpy as np
 import ray
 import torch
-from fsspec.utils import nullcontext
 from ray.util.queue import Queue, Empty
 from tensordict import TensorDict
 from transformers import AutoTokenizer, PreTrainedTokenizer, ProcessorMixin
