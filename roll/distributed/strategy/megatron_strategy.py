@@ -489,6 +489,8 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
         if dist.get_rank() == 0:
             if self.tokenizer is not None:
                 self.tokenizer.save_pretrained(save_dir)
+            if self.processor is not None:
+                self.processor.save_pretrained(save_dir)
 
         # save optimizer
         checkpoint_dir = get_checkpoint_dir(save_dir,
