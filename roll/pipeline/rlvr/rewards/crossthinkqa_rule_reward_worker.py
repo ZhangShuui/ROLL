@@ -1,3 +1,4 @@
+# 导入必要的库和模块
 from functools import partial
 from typing import Optional, Union, Iterator
 import json
@@ -20,7 +21,7 @@ from typing import Union, Dict, List
 
 from roll.utils.logging import get_logger
 
-logger = get_logger()  # Get logger instance
+logger = get_logger()  # 获取日志记录器实例
 
 
 def get_response_length_reward(min_len, max_len):
@@ -69,19 +70,19 @@ def get_repetition_penalty_reward(ngram_size: int, max_penalty: float):
 
 def extract_after_last_think(input_string, end_think="</think>"):
     """
-    Extract content after the last "end_think" tag in the input string,
-    and remove all newlines at the beginning of the result string.
+    提取输入字符串中最后一个"end_think"标签之后的内容，
+    并移除结果字符串开头的所有换行符。
 
     Args:
-    input_string: original string
+    input_string: 原始字符串。
 
     Returns:
-    Extracted and processed string. Returns empty string if "end_think" tag not found.
+    提取并处理后的字符串。如果未找到"end_think"标签，则返回空字符串。
     """
     last_index = input_string.rfind(end_think)
 
     if last_index == -1:
-        return input_string  # return None or original string as needed
+        return input_string  # 或者根据需要返回 None 或原始字符串
 
     start_pos = last_index + len(end_think)
     extracted_part = input_string[start_pos:]
@@ -96,9 +97,9 @@ def crossthinkqa_reward_fn(response, ground_truth, reward_type):
     correct_flag = False
 
     # 1. format
-    # Find all \\boxed{} matches
+    # 找到所有的 \\boxed{} 匹配项
     box_matches = re.findall(r"\\boxed\{([^}]+)\}", response)
-    # If no \\boxed{} found, return None
+    # 如果没有找到 \\boxed{} 则返回 None
     if not box_matches:
         lower_response = response.lower()
         last_answer_index = lower_response.rfind("answer is")
@@ -106,7 +107,7 @@ def crossthinkqa_reward_fn(response, ground_truth, reward_type):
             extracted_answer = response
         else:
             extracted_answer = response[last_answer_index + 9 :]
-    # Get content of the last \\boxed{}
+    # 获取最后一个 \\boxed{} 的内容
     else:
         format_flag = True
         extracted_answer = box_matches[-1]
@@ -144,7 +145,8 @@ def crossthinkqa_reward_fn(response, ground_truth, reward_type):
 
 class CrossThinkQARuleRewardWorker(Worker):
     """
-    A sample reward worker for executing IFEval validation and storing the results of each function in `output.tensors`.
+    一个示例 Reward Worker，用于执行 ifeval 验证并把每个 func 的结果放到 output.tensors 中。
+    在此示例里，ground_truths的str
     """
 
     def __init__(self, worker_config: WorkerConfig):
@@ -177,8 +179,8 @@ class CrossThinkQARuleRewardWorker(Worker):
         scores = []
         repetition_penalty_rewards = []
         response_length_rewards = []
-        format_values = []  # Format correctness (strictly require \boxed{})
-        correct_values = []  # Answer correctness (use more lenient extraction rules)
+        format_values = []  # 格式正确的value（严格要求有\boxed{}）
+        correct_values = []  # 答案正确的value（用更宽松的规则提取）
 
         for i, (resp_tokens, ground_truth, tag, prompt) in enumerate(
             zip(data.batch["responses"], ground_truths, tags, prompts)
@@ -198,13 +200,13 @@ class CrossThinkQARuleRewardWorker(Worker):
             format_value = 1 if format_flag else 0
             correct_value = 1 if correct_flag else 0
 
-            # score should be 0 or 1, indicating model response correctness or not
+            # score应该为0或者1，标志模型回复的对错
             if crossthinkqa_reward > 0:
                 score = 1.0
             else:
                 score = 0.0
 
-            # store into crossthinkqa_rewards
+            # 存到 crossthinkqa_rewards
             crossthinkqa_rewards.append(crossthinkqa_reward)
             scores.append(score)
             repetition_penalty_rewards.append(repetition_penalty_reward)
@@ -246,11 +248,8 @@ class CrossThinkQARuleRewardWorker(Worker):
         format_values = torch.tensor(format_values, dtype=torch.float16)
         correct_values = torch.tensor(correct_values, dtype=torch.float16)
 
-        # 5) Aggregate these tensors into a unified output dictionary
-        # TODO: Consider standardizing output formats across reward workers to avoid manual updates when adding new metrics.
-        #       Potential solutions: 
-        #       - Define a common interface for reward worker outputs
-        #       - Use dynamic registration for new metrics (e.g., via a registry pattern)
+        # 5) 将这些张量打包进同一个字典
+        # TODO: 不同的reward worker的output是否需要统一output，或者有没有自适应的办法，避免在新增监控量时每个worker都需要修改
         output_tensors = {
             "token_level_rewards": token_level_rewards,
             "response_level_rewards": response_level_rewards,
@@ -261,6 +260,6 @@ class CrossThinkQARuleRewardWorker(Worker):
             # "correct_values": correct_values
         }
 
-        # 6) Construct DataProto return value
+        # 6) 用 DataProto.from_dict(...) 构造返回值
         output = DataProto.from_dict(tensors=output_tensors)
         return output

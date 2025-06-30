@@ -1,3 +1,4 @@
+# 导入必要的库和模块
 from functools import partial
 from typing import Optional, Union, Iterator
 import json
@@ -14,7 +15,7 @@ import multiprocessing
 import itertools, collections
 from collections import defaultdict
 
-# Import from existing WorkerConfig, Worker, Dispatch and other modules
+# 从已有的 WorkerConfig、Worker、Dispatch 等模块导入
 from roll.configs.worker_config import WorkerConfig
 from roll.distributed.executor.worker import Worker
 from roll.distributed.scheduler.decorator import Dispatch, register
@@ -30,40 +31,40 @@ os.environ["NLTK_DATA"] = os.path.join(os.path.dirname(__file__), "nltk_data")
 from nltk.corpus import wordnet as wn
 from nltk.wsd import lesk
 
-# Assume tokenizer still comes from default_tokenizer_provider
+# 假设 tokenizer 依然来自 default_tokenizer_provider
 from roll.models.model_providers import default_reward_model_provider, default_tokenizer_provider
 
-# Import dictionary mapping of ifeval validation functions
-# IF_FUNCTIONS_MAP is the function mapping included in the complete implementation given above
+# 引入 ifeval 验证函数的字典映射
+# IF_FUNCTIONS_MAP 是题主在上面给出的完整实现中包含的函数映射
 from typing import Union, Dict, List
 
 from roll.utils.logging import get_logger
 
-logger = get_logger()  # Get logger instance
+logger = get_logger()  # 获取日志记录器实例
 
 
 def first_boxed(text: str) -> str | None:
     """
-    Extract content of the first \boxed{...}, supporting nested {} inside boxed.
+    提取第一个 \boxed{...} 的内容，支持 boxed 内部再嵌套 {}。
     """
     marker = r"\boxed{"
     start = text.find(marker)
     if start == -1:
-        return ""  # No \boxed{ found
+        return ""  # 没找到 \boxed{
 
-    i = start + len(marker)  # Skip '\boxed{'
-    depth = 1  # Already entered 1 level of {
+    i = start + len(marker)  # 跳过 '\boxed{'
+    depth = 1  # 已进入 1 层 {
     buf = []
 
-    while i < len(text) and depth:  # Scan until balanced
+    while i < len(text) and depth:  # 扫描直到配平
         ch = text[i]
         if ch == "{":
             depth += 1
         elif ch == "}":
             depth -= 1
-            if depth == 0:  # Return to 0 means boxed is complete
+            if depth == 0:  # 恢复到 0 说明 boxed 完成
                 break
-        if depth:  # Only record characters when brackets are not balanced
+        if depth:  # 只在括号未配平时记录字符
             buf.append(ch)
         i += 1
 
@@ -72,8 +73,8 @@ def first_boxed(text: str) -> str | None:
 
 class timeout:
     """
-    This class is similar to the timeout mechanism in `MathRewardWorker` and is primarily for demonstration purposes.
-    If timeouts are not required, this class can be omitted.
+    与 MathRewardWorker 示例中类似的超时上下文，用于演示，
+    如果不需要超时，可直接省略。
     """
 
     def __init__(self, seconds=1, error_message="Timeout"):
@@ -91,97 +92,97 @@ class timeout:
         signal.alarm(0)
 
 
-# Contains keywords: Your response should include keywords {keyword1}, {keyword2}
+# 包含关键字：在你的回答中应包含关键字 {keyword1}、{keyword2}
 def verify_keywords(text, keyword_list):
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Convert text to lowercase for case-insensitive matching
+    # 将响应文本转换为小写，以便进行不区分大小写的匹配
     response_lower = text.lower()
 
-    # Check if response contains all keywords (each keyword be converted to lowercase for matching)
+    # 检查响应中是否包含所有关键字（每个关键字也转换为小写进行匹配）
     return all(keyword.lower() in response_lower for keyword in keyword_list)
 
 
-# Keyword frequency: In your response, word {word} should appear {N} times
+# 关键字出现频率：在你的回答中，单词 {word} 应该出现 {N} 次
 def verify_keyword_frequency(text, word, N):
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Convert text to lowercase for case-insensitive search
+    # 将文本转换为小写，使搜索不区分大小写
     text = text.lower()
     word = word.lower()
 
-    # Use regex to match word boundaries and split text into word list
+    # 使用正则表达式匹配单词边界，将文本切分为单词列表
     words = re.findall(r"\b\w+\b", text)
 
-    # Count actual occurrences (exactly match keywords)
+    # 统计实际出现次数（精确匹配关键字）
     actual_count = sum(1 for word in words if word == word)
 
-    # Check if actual occurrence count equals expected N times
+    # 检查实际出现次数是否等于期望的 N 次
     constraint_met = actual_count == N
 
     return constraint_met
 
 
-# Forbidden words: your response should not contain keywords {forbidden words}
+# 禁止出现特定单词：回答中不应包含关键字 {forbidden words}
 def validate_forbidden_words(text, forbidden_words):
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Convert text to lowercase for case-insensitive matching
+    # 将文本转换为小写，进行不区分大小写的匹配
     text_lower = text.lower()
 
-    # Check if each forbidden word appears in the text
+    # 检查每个禁止单词是否出现在文本中
     found_words = [word for word in forbidden_words if word.lower() in text_lower]
 
-    # If no forbidden words found, return True; otherwise return False
+    # 如果没有找到禁止单词，返回 True；否则返回 False
     return len(found_words) == 0
 
 
-# Letter frequency: In your response, letter {letter} should appear exactly {N} times
+# 字母出现频率：在你的回答中，字母 {letter} 应该恰好出现 {N} 次
 def verify_letter_frequency(text: str, letter: str, N: int) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
     if len(letter) != 1:
-        raise ValueError("Letter parameter must be a single character")
+        raise ValueError("字母参数必须为单个字符")
 
     actual_count = text.count(letter)
     return actual_count == N
 
 
-# Response language constraint: Your entire response should use {language}, no other language content allowed
+# 回答语言约束：你的整个回答应当使用 {language}，不允许包含其他语言内容
 def validate_response_language(text, language):
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
     from langdetect import detect
 
-    # Detect text language
+    # 检测文本的语言
     detected_language = detect(text)
-    # Check if the detected language matches the expected language
+    # 检查检测到的语言是否与预期语言相符
     return detected_language == language
 
 
-# Paragraph count: Your response should contain {N} paragraphs, separated by markdown separator "* * *"
+# 段落数量：回答中应包含 {N} 个段落，段落之间使用 markdown 分隔符 "* * *" 隔开
 def verify_paragraph_count(text: str, N: int) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
 
     def clean_text(text: str) -> str:
-        """Remove extra whitespace and normalize line breaks"""
+        """移除多余空白字符，并规范换行符"""
         return "\n".join(line.strip() for line in text.splitlines()).strip()
 
-    # Clean input text
+    # 清理输入文本
     text = clean_text(text)
 
-    # Split text by markdown separator, each separator creates n+1 paragraphs
+    # 依据 markdown 分隔符分割文本，每个分隔符会创建 n+1 个段落
     paragraphs = text.split("* * *")
     actual_count = len(paragraphs)
 
-    # Verify each split result contains non-empty content
+    # 验证每个分割结果中是否包含非空内容
     valid_paragraphs = [p.strip() for p in paragraphs if p.strip()]
     if len(valid_paragraphs) != actual_count:
         return False
@@ -189,16 +190,16 @@ def verify_paragraph_count(text: str, N: int) -> bool:
     return actual_count == N
 
 
-# Word count constraint: In your response, word count should be at least/around/at most {N}
+# 单词数量约束：回答中的单词数应至少/大约/最多达到 {N} 个
 def validate_word_constraint(text: str, N: int, quantifier: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Remove extra whitespace and split text into word list
+    # 清除多余空白字符并拆分文本为单词列表
     words = text.strip().split()
     actual_count = len(words)
 
-    # Define tolerance range for "around" constraint (±10% of target word count, at least 1 word)
+    # 定义 "around" 约束的容错范围（目标单词数的 ±10%，至少 1 个单词）
     tolerance = max(round(N * 0.1), 1)
 
     if quantifier == "at least":
@@ -211,18 +212,18 @@ def validate_word_constraint(text: str, N: int, quantifier: str) -> bool:
         return False
 
 
-# Sentence count constraint: Your resopnse should contain at least/around/at most {N} sentences
+# 句子数量约束：回答中应包含至少/大约/最多 {N} 个句子
 def verify_sentence_constraint(text: str, N: int, quantifier: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Use regex to split text into sentence list based on periods or question marks followed by spaces
+    # 使用正则表达式根据句号或问号后的空格拆分文本为句子列表
     sentences = re.split(r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s", text)
 
-    # Count actual number of sentences
+    # 统计实际句子数量
     actual_count = len(sentences)
 
-    # Compare based on different quantifiers
+    # 根据不同的量词进行比较
     if quantifier == "at least":
         return actual_count >= N
     elif quantifier == "around":
@@ -233,61 +234,61 @@ def verify_sentence_constraint(text: str, N: int, quantifier: str) -> bool:
         return False
 
 
-# Paragraph count and specific paragraph first word constraint: Your response should contain {N} paragraphs separated only by two newlines, and paragraph {i} must start with {first word}
+# 段落数量及指定段落首词约束：回答中应包含 {N} 个段落，段落之间仅以两个换行符分隔，第 {i} 个段落必须以 {first word} 开头
 def validate_paragraphs(text, N, first_word, i):
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Split text into paragraphs by two newlines
+    # 根据两个换行符分割文本为段落
     paragraphs = text.split("\n\n")
 
-    # Check if total paragraph count meets requirements
+    # 检查段落总数是否符合要求
     if len(paragraphs) != N:
         return False
 
-    # Check if paragraph i starts with specified word
+    # 检查第 i 个段落的开头是否为指定单词
     if paragraphs[i - 1].strip().startswith(first_word):
         return True
     return False
 
 
-# Postscript validation: Please clearly add a postscript starting with {postscript marker} at the end of your answer
+# 附言验证：请在回答末尾明确添加以 {postscript marker} 开头的附言
 def verify_postscript(text, postscript_marker):
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Check if text contains postscript marker
+    # 检查文本中是否包含附言标记
     if postscript_marker in text:
-        # Get marker index position
+        # 获取标记的索引位置
         marker_index = text.find(postscript_marker)
-        # Check if there's other content near the marker
+        # 检查标记附近是否还有其它内容
         remaining_text = text[marker_index:].strip()
-        # Verify postscript is not just the marker itself
+        # 验证附言不只是标记本身而已
         return len(remaining_text) > len(postscript_marker)
     return False
 
 
-# Placeholder validation: Your response should contain at least {N} placeholders in square brackets, e.g. [address]
+# 占位符验证：回答中应至少包含 {N} 个用方括号表示的占位符，例如 [address]
 def validate_placeholders(text: str, N: int) -> tuple[bool, List[str]]:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Use regex to find all content within square brackets
+    # 使用正则表达式查找所有位于方括号内的内容
     pattern = r"\[(.*?)\]"
     placeholders = re.findall(pattern, text)
 
-    # Check if at least N placeholders are found
+    # 检查是否至少找到了 N 个占位符
     has_enough = len(placeholders) >= N
 
     return has_enough
 
 
-# Bullet point validation: Your response must contain exactly {N} bullet points. Use markdown format bullet points, e.g.: * This is a point.
+# 项目符号验证：回答必须包含恰好 {N} 个项目符号点。请使用 markdown 格式的项目点，例如：* 这是一个点。
 def verify_bullet_points(text: str, N: int) -> tuple[bool, str]:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
-    # Split text by lines and count lines starting with * or -
+    # 按行拆分文本，并统计以 * 或 - 开头的行
     lines = text.split("\n")
     bullet_points = [line.strip() for line in lines if line.strip().startswith(("*", "-"))]
     actual_count = len(bullet_points)
@@ -298,7 +299,7 @@ def verify_bullet_points(text: str, N: int) -> tuple[bool, str]:
         return False
 
 
-# Title validation: Your response must contain a title wrapped in double angle brackets, e.g. <<poem of joy>>
+# 标题验证：回答中必须包含一个标题，用双尖括号包裹，例如 <<poem of joy>>
 def validate_title(text: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -312,7 +313,7 @@ def validate_title(text: str) -> bool:
         return False
 
 
-# Multiple choice validation: Your response content must be one of the following options: {options}
+# 选择题验证：回答内容必须为以下选项之一：{options}
 def validate_choice(text: str, options: list) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -323,7 +324,7 @@ def validate_choice(text: str, options: list) -> bool:
     return False
 
 
-# Highlighted section count validation: Your response must highlight at least {N} sections using markdown format, e.g. *highlighted section*
+# 高亮区域数量验证：回答中必须至少高亮 {N} 个区域，使用 markdown 格式，比如 *highlighted section*
 def validate_highlighted_sections(text: str, N: int) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -337,13 +338,13 @@ def validate_highlighted_sections(text: str, N: int) -> bool:
         return False
 
 
-# Multi-section validation: Your response must contain {N} sections, each section should start with {section splitter}
+# 多区块验证：回答中必须包含 {N} 个区块，每个区块的开始都应以 {section splitter} 开头
 def validate_sections(text: str, N: int, section_splitter: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
     """
     sections = text.split(section_splitter)
-    # First section may not start with splitter, so adjustment needed
+    # 第一个区块可能不以分割符开头，因此需要做调整
     if sections[0] == "":
         sections.pop(0)
     if len(sections) == N:
@@ -352,7 +353,7 @@ def validate_sections(text: str, N: int, section_splitter: str) -> bool:
         return False
 
 
-# JSON format validation: Entire output must be wrapped in JSON format
+# JSON 格式验证：整个输出必须使用 JSON 格式包裹
 def validate_json_format(text: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -364,7 +365,7 @@ def validate_json_format(text: str) -> bool:
     return True
 
 
-# Repeat prompt validation: First repeat the user's request (do not change any content), then give your answer (repeated content should not contain additional information)
+# 重复提示验证：首先重复用户的请求内容不做更改，然后再给出你的回答（重复内容不应包含其他额外信息）
 def validate_repeat_prompt(text: str, original_prompt: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -375,7 +376,7 @@ def validate_repeat_prompt(text: str, original_prompt: str) -> bool:
         return False
 
 
-# Two responses validation: Provide two different responses that are separated only by six asterisks "******"
+# 两种回答验证：提供两种不同的回答，两个回答之间仅用六个星号 "******" 分隔开
 def validate_two_responses(text: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -389,7 +390,7 @@ def validate_two_responses(text: str) -> bool:
     return False
 
 
-# All uppercase: Entire response must use English uppercase letters
+# 全部大写：整个回答必须全部使用英文大写字母
 def validate_uppercase(text: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -400,7 +401,7 @@ def validate_uppercase(text: str) -> bool:
         return False
 
 
-# All lowercase: Entire response must use English lowercase letters, no uppercase allowed
+# 全部小写：整个回答必须全部使用英文小写字母，不允许有大写字母
 def validate_lowercase(text: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -411,7 +412,7 @@ def validate_lowercase(text: str) -> bool:
         return False
 
 
-# All-caps word frequency validation: In your response, all-caps words should appear at least/around/at most {N} times
+# 全大写单词出现频率验证：在回答中，全大写单词的出现次数应满足至少/大约/最多 {N} 次
 def validate_frequency_capital_words(text: str, N: int, quantifier: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -427,7 +428,7 @@ def validate_frequency_capital_words(text: str, N: int, quantifier: str) -> bool
         return False
 
 
-# End phrase validation: Answer must end with exact phrase {end phrase}, and there should be no more content after it.
+# 结束语验证：回答最后必须以确切的短语 {end phrase} 结束，且该短语后面不允许有其他内容
 def validate_end(text: str, end_phrase: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -438,7 +439,7 @@ def validate_end(text: str, end_phrase: str) -> bool:
         return False
 
 
-# Quotation wrapping validation: Entire response must be wrapped in double quotes
+# 引号包装验证：整个回答必须用双引号包裹起来
 def validate_quotation(text: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -449,7 +450,7 @@ def validate_quotation(text: str) -> bool:
         return False
 
 
-# Comma ban: No commas allowed in entire response
+# 禁用逗号：整个回答中不允许出现任何逗号
 def validate_no_commas(text: str) -> bool:
     """
     Reference implementation from: https://github.com/allenai/open-instruct/blob/main/open_instruct/if_functions.py
@@ -462,23 +463,23 @@ def validate_no_commas(text: str) -> bool:
 
 def call_ifeval_function(func, text: str, constraint_dict: dict):
     """
-    1) Get function signature
-    2) Only keep parameters that match the signature and are not None
-    3) Call func(text, **filtered_args)
+    1) 获取func的函数签名
+    2) 只保留与签名匹配且非None的参数
+    3) 调用func(text, **filtered_args)
     """
-    # 1) Get function signature
+    # 1) 获取函数签名
     sig = inspect.signature(func)
-    valid_params = set(sig.parameters.keys())  # Set of function signnature parameters
+    valid_params = set(sig.parameters.keys())  # 该函数形参名的集合
 
-    # 2) Filter out irrelevant fields and None values in constraint_dict
-    #    (If a function parameter is None value and it's valid, keep it; otherwise you can add extra judgment)
+    # 2) 过滤掉 constraint_dict 中的无关字段和 None 值
+    #    （如果一个函数的参数刚好是 None 值也是合法，就保留；否则你可以额外判断）
     filtered_args = {}
     for k, v in constraint_dict.items():
-        if k in valid_params:  # Parameter list actually has this field
-            # If you want to completely discard None, you can add: if v is not None:
+        if k in valid_params:  # 形参里确实有这个字段
+            # 如果你想彻底丢弃 None，也可以加上: if v is not None:
             filtered_args[k] = v
 
-    # 3) Call function
+    # 3) 调用函数
     return func(text, **filtered_args)
 
 
@@ -486,35 +487,35 @@ def get_repetition_penalty_reward(ngram_size: int, max_penalty: float):
     """
     Reference implementation from: https://github.com/eddycmu/demystify-long-cot/blob/release/openrlhf/openrlhf/reward/repetition.py
     """
-    # If `max_penalty` is positive, throw error directly, indicating that negative values should be used for penalty
+    # 如果 max_penalty 是正的，这里直接抛出错误，说明要用负值来做惩罚
     if max_penalty > 0:
         raise ValueError(f"max_penalty {max_penalty} should not be positive")
 
-    # Internal function `zipngram` for splitting text into ngrams
+    # 内部函数 zipngram，用于切分文本为 ngram
     def zipngram(text: str, ngram_size: int):
         words = text.lower().split()
         return zip(*[words[i:] for i in range(ngram_size)])
 
-    # `repetition_penalty_reward` function calculates n-gram repetition degree in given response
+    # repetition_penalty_reward 函数用于计算在给定 response 中，n-gram 的重复程度
     def repetition_penalty_reward(response, **kwargs) -> float:
         """
         ref implementation: https://github.com/eddycmu/demystify-long-cot/blob/release/openrlhf/openrlhf/reward/repetition.py
         """
-        # If response is empty or insufficient ngram size, return 0 directly
+        # 如果回复为空或不足 ngram 大小，则直接返回 0
         if response == "" or len(response.split()) < ngram_size:
             return 0.0
 
-        # Iterate all ngrams, count unique ngram and total ngram quantities
+        # 遍历所有 ngram，统计 unique ngram 和 total ngram 的数量
         ngrams = set()
         total = 0
         for ng in zipngram(response, ngram_size):
             ngrams.add(ng)
             total += 1
 
-        # scaling = 1 - (non-repeated ngrams / total ngram count)
-        # The fewer non-repeated (more repeated), the larger scaling
+        # scaling = 1 - (不重复的 ngram / 总的 ngram 数量)
+        # 不重复的越少（重复越多）scaling 越大
         scaling = 1 - len(ngrams) / total
-        # reward is scaling multiplied by max_penalty
+        # reward 是 scaling 乘以 max_penalty
         reward = scaling * max_penalty
         return reward
 
@@ -523,30 +524,30 @@ def get_repetition_penalty_reward(ngram_size: int, max_penalty: float):
 
 def extract_after_last_think(input_string, end_think="</think>"):
     """
-    Extract content after the last '</think>' tag in the input string,
-    and remove all newlines at the beginning of the result string.
+    提取输入字符串中最后一个 '</think>' 标签之后的内容，
+    并移除结果字符串开头的所有换行符。
 
     Args:
-    input_string: Original string.
+    input_string: 原始字符串。
 
     Returns:
-    Extracted and processed string. Returns empty string if '</think>' tag not found.
+    提取并处理后的字符串。如果未找到 '</think>' 标签，则返回空字符串。
     """
-    # Find starting position of last end_think
+    # 查找最后一个 end_think 的起始位置
     last_index = input_string.rfind(end_think)
 
-    # If end_think not found
+    # 如果没有找到 end_think
     if last_index == -1:
         # return ""
-        return input_string  # Return None or original string as needed
+        return input_string  # 或者根据需要返回 None 或原始字符串
 
-    # Calculate position after end_think ends
+    # 计算 end_think 结束后的位置
     start_pos = last_index + len(end_think)
 
-    # Extract part after end_think
+    # 提取 end_think 之后的部分
     extracted_part = input_string[start_pos:]
 
-    # Remove all leading newlines '\n'
+    # 移除开头的所有换行符 '\n'
     cleaned_part = extracted_part.lstrip("\n")
 
     return cleaned_part
@@ -554,7 +555,8 @@ def extract_after_last_think(input_string, end_think="</think>"):
 
 class GeneralRuleRewardWorker(Worker):
     """
-    A sample reward worker for executing IFEval validation and storing the results of each function in `output.tensors`.
+    一个示例 Reward Worker，用于执行 ifeval 验证并把每个 func 的结果放到 output.tensors 中。
+    在此示例里，ground_truths的str
     """
 
     def __init__(self, worker_config: WorkerConfig):
@@ -575,20 +577,20 @@ class GeneralRuleRewardWorker(Worker):
     @register(dispatch_mode=Dispatch.DP_MP_COMPUTE)
     def compute_rewards(self, data: DataProto):
         """
-        Only call "func_name" in data.non_tensor_batch['ground_truth'],
-        and return its result as the single response-level reward.
+        仅调用 data.non_tensor_batch['ground_truth'] 中的 “func_name”，
+        并将其结果作为单一的 response-level 奖励返回。
         """
 
-        # 1) Decode response text
+        # 1) 解码回复文本
         response_text_list = self.tokenizer.batch_decode(data.batch["responses"], skip_special_tokens=False)
         batch_size = len(response_text_list)
 
-        # 2) Read ground_truth (which is a JSON string containing func_name and other parameters)
+        # 2) 读取 ground_truth（其中是一串 JSON，包含 func_name 等参数）
         prompts = data.non_tensor_batch["prompt"]
         ground_truths = data.non_tensor_batch["ground_truth"]
         tags = data.non_tensor_batch["tag"]
 
-        # 3) Prepare a list to store validation results
+        # 3) 准备一个列表存放验证结果
         results = [0.0] * batch_size
         repetition_penalty_rewards = []
         response_length_rewards = []
@@ -596,34 +598,35 @@ class GeneralRuleRewardWorker(Worker):
         for i, (resp_tokens, ground_truth, tag, prompt) in enumerate(
             zip(data.batch["responses"], ground_truths, tags, prompts)
         ):
-            # Decode current entry
+            # 解码当前条目
             resp_text = self.tokenizer.decode(resp_tokens, skip_special_tokens=False)
             resp_text1 = resp_text.replace("<|endoftext|>", "").replace("<pad>", "").replace("<|im_end|>", "")
             resp_text = extract_after_last_think(resp_text1)
             # logger.info(f"extract_after_last_think(resp_text): {resp_text}")
 
             if tag == "ifeval":
-                # Parse ground_truth (JSON) to get constraint information
+                # 解析 ground_truth (JSON) 得到约束信息
                 if isinstance(ground_truth, str):
                     constraint_dict = json.loads(ground_truth)
                 else:
-                    constraint_dict = ground_truth  # If it's already a dict, use directly
+                    constraint_dict = ground_truth  # 如果已经是 dict，就直接用
 
-                # Extract `func_name` from constraints
+                # 从约束中取出 func_name
                 func_name = constraint_dict.get("func_name", None)
                 if not func_name or func_name not in IF_FUNCTIONS_MAP:
                     self.logger.warning("constraint missing func_name")
-                    # If no `func_name` or not find corresponding function, we will record result as 0.0 (or you can do other processing)
+                    # 如果无 func_name 或没找到对应函数
+                    # 那么这里我们将结果记为 0.0（也可做别的处理）
                     results[i] = 0.0
                     continue
 
-                # Remove `func_name`, pass other parameters to function
+                # 移除 func_name，其它参数传给函数
                 constraint_dict.pop("func_name")
                 func = IF_FUNCTIONS_MAP[func_name]
                 # print(f"Running function {func_name} with Response text: {resp_text}")
                 # print(f"Response text: {resp_text}")
 
-                # Call function for validation
+                # 调用函数进行验证
                 try:
                     result = call_ifeval_function(func, resp_text, constraint_dict)
                 except Exception as e:
@@ -632,7 +635,7 @@ class GeneralRuleRewardWorker(Worker):
             else:
                 self.logger.warning(f"Unknown tag: {tag}")
 
-            # Convert result to float: bool -> (1.0/0.0), numeric -> float(...), other structures -> bool(...)
+            # 将结果转为 float: bool -> (1.0/0.0), 数值 -> float(...), 其他结构 -> bool(...)
             if isinstance(result, bool):
                 val = 1.0 if result else 0.0
             elif isinstance(result, (int, float)):
@@ -640,27 +643,27 @@ class GeneralRuleRewardWorker(Worker):
             else:
                 val = 1.0 if result else 0.0
 
-            # Store to results
+            # 存到 results
             results[i] = val
             repetition_penalty_rewards.append(self.repetition_penalty_reward_fn(resp_text1))
 
-        # 4) Prepare output tensors:
-        #   - token_level_rewards: same shape as responses, initialized with 0
-        #   - response_level_rewards: i.e. results
-        #   - scores: can be same as response_level_rewards (for statistics/logging)
+        # 4) 准备输出张量：
+        #   - token_level_rewards：形状与 responses 相同、全 0
+        #   - response_level_rewards：即 results
+        #   - scores：可与 response_level_rewards 相同（用于统计/日志）
         token_level_rewards = torch.zeros_like(data.batch["responses"], dtype=torch.float16)
         scores = torch.tensor(results, dtype=torch.float16)
         repetition_penalty_rewards = torch.tensor(repetition_penalty_rewards, dtype=torch.float16)
         response_level_rewards = scores + repetition_penalty_rewards
 
-        # 5) Aggregate these tensors into a unified output dictionary
+        # 5) 将这些张量打包进同一个字典
         output_tensors = {
             "token_level_rewards": token_level_rewards,
             "response_level_rewards": response_level_rewards,
             "scores": scores
         }
 
-        # 6) Construct DataProto return value
+        # 6) 用 DataProto.from_dict(...) 构造返回值
         output = DataProto.from_dict(tensors=output_tensors)
         return output
 

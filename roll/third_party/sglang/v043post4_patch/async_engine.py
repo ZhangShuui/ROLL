@@ -1,16 +1,3 @@
-# Copyright (c) 2025, ALIBABA CORPORATION. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 import asyncio
 import traceback
 import asyncio
@@ -25,7 +12,7 @@ class SglangInputType(enum.Enum):
     ABORT = enum.auto()
 
 def list_endswith(lst, suffix):
-    # Check if lst ends with suffix
+    # 检查 lst 是否以 suffix 结尾
     return lst[-len(suffix):] == suffix if len(suffix) <= len(lst) else False
 
 def trim_overlap_tokens(existing_tokens, new_chunk_tokens):
@@ -41,7 +28,7 @@ def trim_overlap_tokens(existing_tokens, new_chunk_tokens):
     return new_chunk_tokens[max_overlap:]
 
 
-# Used to store all abort_rid_set
+# 用于存放所有abort_rid_set
 abort_rid_set = set()
 abort_lock = asyncio.Lock()
 
@@ -51,7 +38,7 @@ async def producer(thread_queue, asyncio_queue):
     while True:
         if not thread_queue.empty():
             data = thread_queue.get()
-            # Received end marker
+            # 收到结束标记
             if data is None:
                 logger.info("[sglang async engine] receive stop signal, stoping")
                 break
@@ -70,12 +57,12 @@ async def consumer(asyncio_queue, consumer_id, llm, request_complete_callback):
     from roll.distributed.scheduler.protocol import DataProto
 
     def process_sglang_output(token_ids, meta_info):
-        # Online production use
+        # 线上正式使用
         output_data = DataProto(meta_info=meta_info)
         output_data.meta_info["output_token_ids"] = token_ids
         request_complete_callback(data=output_data)
 
-        # Local debugging use
+        # 本地调试使用
         # request_complete_callback(meta_info['request_id'], token_ids)
         logger.debug(f"worker_id:{consumer_id} request_id: {meta_info['request_id']} finish!")
 

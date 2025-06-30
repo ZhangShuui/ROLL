@@ -1,26 +1,14 @@
-# Copyright (c) 2025, ALIBABA CORPORATION. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 """
-Implementation of Megatron Offload States:
+megatron offload states的实现思路：
 
-Offload
-Release buffers in megatron.core.distributed.distributed_data_parallel.DistributedDataParallel
-Offload main_weights in optimizer, main_weights.to('cpu'), using flat tensor
-Offload optimizer states, to('cpu')
-Offload model weights, to('cpu'), using flat tensor; release shard_float16_groups and shard_fp32_groups
+offload
+释放megatron.core.distributed.distributed_data_parallel.DistributedDataParallel中的buffer
+offload optimizer中的main_weights, main_weights.to('cpu')，使用flat tensor
+offload optimizer states, to('cpu')
+offload model weights, to('cpu'), 使用flat tensor；释放shard_float16_groups和shard_fp32_groups
 
-Reload
+
+reload
 """
 import gc
 import types
@@ -234,10 +222,9 @@ def move_ddp_model_params_tensor_to_device(optimizer: DistributedOptimizer,
                     shard_model_param = model_param.detach().view(-1)[param_range.start: param_range.end]
 
                     # shard_float16_groups 不属于optimizer state的key，可以直接替换param
-                    # `shard_float16_groups` is not an optimizer state key, can directly replace param
-                    # This approach: optimizer.shard_float16_groups[
+                    # 这种方式: optimizer.shard_float16_groups[
                     # group_index][len(shard_float16_params_this_group)].data = shard_model_param
-                    # Cannot achieve memory release, identified as the effect of model_param.detach(), fp32 below can be released normally
+                    # 不能实现显存释放，定位到是model_param.detach()的影响，下面的fp32能正常释放
                     optimizer.shard_float16_groups[group_index][
                         len(shard_float16_params_this_group)] = shard_model_param
                     shard_float16_params_this_group.append(shard_model_param)
@@ -265,7 +252,7 @@ def move_grad_data_to_device(optimizer,
         # else:
         #     buffer.grad_data.data = buffer.grad_data.data.to(device, non_blocking=non_blocking)
 
-        # Release grad, save CPU memory
+        # 释放grad, 节省cpu memory
         if device == torch.device('cpu'):
             buffer.grad_data.data = torch.tensor(1, dtype=buffer.grad_data.data.dtype, device=device, pin_memory=pin_memory)
             for param in buffer.params[::-1]:
@@ -451,7 +438,7 @@ def offload_megatron_no_grad_module(model_chunks: List[Union[DistributedDataPara
                                     non_blocking: bool = False
                                     ):
     """
-        Need to offload parameters with grad=False
+        需要offload一下 grad=False的参数
     """
 
     device = torch.device('cpu')
