@@ -1,7 +1,11 @@
-from importlib.util import find_spec
-
 import importlib
+from importlib.util import find_spec
 from typing import Any, Optional
+
+from roll.utils.logging import get_logger
+
+
+logger = get_logger()
 
 
 def is_vllm_available() -> bool:
@@ -14,8 +18,8 @@ def can_import_class(class_path: str) -> bool:
         module = importlib.import_module(module_path)
         getattr(module, class_name)
         return True
-    except (ModuleNotFoundError, AttributeError) as e:
-        print(e)
+    except Exception as e:
+        logger.error(f"Failed to import class {class_path}: {e}")
         return False
 
 
