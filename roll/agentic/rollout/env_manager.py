@@ -12,6 +12,7 @@ import PIL
 import numpy as np
 import ray
 import torch
+
 from ray.util.queue import Queue, Empty
 from tensordict import TensorDict
 from transformers import AutoTokenizer, PreTrainedTokenizer, ProcessorMixin
@@ -23,6 +24,7 @@ from roll.pipeline.agentic.agentic_config import EnvManagerConfig, AgenticConfig
 from roll.utils.constants import RAY_NAMESPACE
 from roll.utils.functionals import pad_to_length
 from roll.utils.logging import get_logger
+from roll.agentic.rollout.env_action_limiter import get_global_limiter
 
 """
 base agentic codes reference: https://github.com/RAGEN-AI/RAGEN/blob/main/ragen/llm_agent/es_manager.py
@@ -141,6 +143,13 @@ class EnvManager:
         self.running = False
         self.use_thread_lock = self.env_config.get("use_thread_lock", True) # 避免同时执行大量cpu操作, 可以通过env_config配置
         self.thread_lock = thread_lock if self.use_thread_lock else nullcontext()
+        
+        # 设置env step 并发限制
+        self.max_env_step_concurrent = self.env_config.get("max_env_step_concurrent", 0)
+        self.env_step_limiter = None
+        if self.max_env_step_concurrent > 0:
+            env_tag = self.env_config.get("tag", "default")
+            self.env_step_limiter = get_global_limiter(tag=env_tag, max_concurrent_calls=self.max_env_step_concurrent)
 
         self.env_entry = copy.deepcopy(self.env_config)
         self.env_entry['env'] = REGISTERED_ENVS[self.env_entry['env_class']](self.env_entry['config'])
@@ -557,8 +566,13 @@ class EnvManager:
         acc_reward, turn_info, turn_done = 0, {}, False
         executed_actions = []
         for action in actions:
-            with self.thread_lock:
+            if self.max_env_step_concurrent > 0:
+                acquire_id = self.env_step_limiter.acquire()
                 _, reward, done, info = env.step(action)
+                self.env_step_limiter.release(acquire_id)
+            else:
+                with self.thread_lock:
+                    _, reward, done, info = env.step(action)
             acc_reward += reward
             turn_info.update(info)  # NOTE: currently use last info for multi-action
             executed_actions.append(action)
