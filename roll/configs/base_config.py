@@ -215,7 +215,7 @@ class BaseConfig:
             if isinstance(attribute, WorkerConfig):
                 if attribute.device_mapping is not None:
                     total_devices.extend(attribute.device_mapping)
-        max_gpu_num = max(total_devices)
+        max_gpu_num = max(total_devices) + 1
         if max_gpu_num <= self.num_gpus_per_node:
             self.num_nodes = 1
         else:
