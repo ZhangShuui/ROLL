@@ -191,6 +191,7 @@ def compute_approx_kl(
 
 
 def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    logits = logits.float()
     log_probs = F.log_softmax(logits, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1))
     return log_probs_labels.squeeze(-1)
@@ -198,6 +199,7 @@ def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.T
 
 def entropy_from_logits(logits: torch.Tensor):
     """Calculate entropy from logits."""
+    logits = logits.float()
     pd = torch.nn.functional.softmax(logits, dim=-1)
     entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
     return entropy
