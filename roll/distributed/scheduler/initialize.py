@@ -5,6 +5,7 @@ import time
 
 import ray
 
+from roll.distributed.scheduler import default_envs
 from roll.distributed.scheduler.driver_utils import (
     get_driver_rank,
     get_driver_master_addr,
@@ -20,15 +21,6 @@ from roll.utils.constants import RAY_NAMESPACE
 from roll.utils.logging import get_logger
 
 logger = get_logger()
-
-default_envs = {
-    # "RAY_DEBUG": "legacy"
-    "TORCHINDUCTOR_COMPILE_THREADS": "2",
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-    "NCCL_CUMEM_ENABLE": "0",   # https://github.com/NVIDIA/nccl/issues/1234
-    "NCCL_NVLS_ENABLE": "0",
-    "ACCL_TUNING_LEVEL": "1",
-}
 
 
 def start_ray_cluster():
