@@ -202,9 +202,17 @@ class RLVRConfig(BaseConfig):
     use_kl_loss: bool = field(default=False, metadata={"help": "Use kl loss"})
     kl_loss_coef: float = field(default=0, metadata={"help": "Loss coefficient for kl loss"})
     entropy_loss_coef: float = field(default=0, metadata={"help": "Loss coefficient for entropy loss"})
-    sft_loss_coef: float = field(
+    postive_loss_coef: float = field(
         default=0,
         metadata={"help": "Loss coefficient for SFT loss, used for positive samples"}
+    )
+    use_topr_neg_loss_coef: float = field(
+        default=0.0,
+        metadata={"help": "Loss coefficient for TOPR Neg loss"}
+    )
+    use_policy_loss_type: Literal["PPO", "PG"] = field(
+        default="PPO",
+        metadata={"help": "whether to use PPO/PG loss"}
     )
     use_topr_loss: bool = field(
         default=False,
