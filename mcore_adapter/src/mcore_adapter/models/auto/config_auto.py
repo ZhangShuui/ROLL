@@ -32,6 +32,11 @@ def get_config_cls(model_type) -> McaModelConfig:
         cls = McaModelConfig
     return cls
 
+def register_config(model_type, config_cls):
+    cls = CONFIG_MAPPING_NAMES.get(model_type, None)
+    if cls is not None:
+        logger.warning(f"Config for model type {model_type} already registered, set {cls} to {config_cls}!")
+    CONFIG_MAPPING_NAMES[model_type] = config_cls
 
 class AutoConfig:
     @classmethod

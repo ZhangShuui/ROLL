@@ -32,6 +32,11 @@ def get_model_cls(model_type) -> McaGPTModel:
         cls = McaGPTModel
     return cls
 
+def register_model(model_type, model_cls):
+    cls = MODEL_MAPPING_NAMES.get(model_type, None)
+    if cls is not None:
+        logger.warning(f"Model for model type {model_type} already registered, set {cls} to {model_cls}!")
+    MODEL_MAPPING_NAMES[model_type] = model_cls
 
 class AutoModel:
     @classmethod
