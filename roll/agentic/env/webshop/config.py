@@ -1,15 +1,18 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from webshop_minimal.utils import (
-    DEFAULT_FILE_PATH,
-)
+import spacy  # temporary fix of segmentation fault when importing pyserini.search.lucene before spacy
+from webshop_minimal import init_basedir
+from webshop_minimal.utils import DEFAULT_FILE_PATH
+
+init_basedir()  # init DEFAULT_FILE_PATH, hardcoded dataset to small
 
 
 @dataclass
 class WebShopEnvConfig:
     """Configuration for WebAgentText environment"""
 
+    # dataset: str = field(default="small", metadata={"description": "Small or full dataset"})
     observation_mode: str = field(default="text", metadata={"choices": ["html", "text"]})
     file_path: str = field(
         default=DEFAULT_FILE_PATH, metadata={"description": "File path for SimServer"}

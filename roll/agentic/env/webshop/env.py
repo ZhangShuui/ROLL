@@ -1,10 +1,12 @@
-from roll.agentic.env.base import BaseLanguageBasedEnv
-from roll.agentic.env.webshop.config import WebShopEnvConfig
-from webshop_minimal import WebAgentTextEnv
-from typing import Optional, Union
-from roll.agentic.utils import all_seed
 import random
 import string
+from typing import Optional, Union
+
+from webshop_minimal import WebAgentTextEnv
+
+from roll.agentic.env.base import BaseLanguageBasedEnv
+from roll.agentic.env.webshop.config import WebShopEnvConfig
+from roll.agentic.utils import all_seed
 
 
 class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
@@ -55,7 +57,9 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
                 session = "".join(random.choices(string.ascii_lowercase, k=10))
         obs, _ = WebAgentTextEnv.reset(self, session=session, instruction_text=instruction_text)
         self.prepare_render_cache(WebAgentTextEnv.get_instruction_text(self))
-        return obs
+        self.prepare_render_cache(obs)
+        obs_with_actions = self._attach_actions(obs)
+        return obs_with_actions
 
     def step(self, action):
         """
@@ -69,7 +73,12 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
             "action_is_valid": True,
             "success": done,
         }
-        return self.observation, reward, done, info
+        obs_with_actions = self._attach_actions(state)
+        return obs_with_actions, reward, done, info
+
+    def _attach_actions(self, observation: str) -> str:
+        actions = ", ".join(self.get_available_actions())
+        return observation + "\n" + "Available actions: " + actions
 
     def render(self, mode=None):
         """
