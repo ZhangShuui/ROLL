@@ -33,7 +33,7 @@ def hf_forward_logprobs():
 
     data_filename = "data/comparison_gpt4_data_zh.json"
 
-    model_args: ModelArguments = ModelArguments(model_name_or_path=model_name, flash_attn="disabled", dtype="bf16")
+    model_args: ModelArguments = ModelArguments(model_name_or_path=model_name, dtype="bf16")
     data_args: DataArguments = DataArguments(
         template="qwen2_5",
         file_name=data_filename,

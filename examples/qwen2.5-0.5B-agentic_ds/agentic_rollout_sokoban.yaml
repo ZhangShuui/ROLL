@@ -56,7 +56,6 @@ pretrain: Qwen/Qwen2.5-0.5B-Instruct
 
 actor_infer:
   model_args:
-    flash_attn: fa2
     disable_gradient_checkpointing: true
     dtype: bf16
   generating_args:

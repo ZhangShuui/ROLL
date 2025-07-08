@@ -323,7 +323,7 @@ def default_actor_model_provider(
     training_args: "TrainingArguments" = None,
     is_trainable: Optional[bool] = False,
 ):
-    config = AutoConfig.from_pretrained(model_args.model_name_or_path)
+    config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
     old_model_name_or_path = model_args.model_name_or_path
     model_args.model_name_or_path = download_model(model_args.model_name_or_path)
     if (
@@ -404,26 +404,22 @@ def default_reward_model_provider(
                 init_kwargs["device_map"] = {"": torch.cuda.current_device()}
             elif model_args.device_map:
                 init_kwargs["device_map"] = model_args.device_map
-            elif model_args.export_dir is None:
-                init_kwargs["device_map"] = "auto"
         logger.info(f"init_kwargs: {init_kwargs}")
         if model_args.model_type in ["auto_sequence_classification"]:
             logger.info(f"use AutoModelForSequenceClassification model {model_args.model_type}")
-            attn_implementation = "flash_attention_2" if model_args.flash_attn == "fa2" else "eager"
-            config = AutoConfig.from_pretrained(model_args.model_name_or_path)
+            config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
             config.num_labels = model_args.num_labels
-            setattr(config, "attn_implementation", attn_implementation)
-            setattr(config, "_attn_implementation", attn_implementation)
+            if model_args.attn_implementation is not None and model_args.attn_implementation != "auto":
+                setattr(config, "_attn_implementation", model_args.attn_implementation)
             model = AutoModelForSequenceClassification.from_pretrained(
                 model_args.model_name_or_path, config=config, **init_kwargs
             )
         elif model_args.model_type in ["auto_token_classification"]:
             logger.info(f"use AutoModelForTokenClassification model {model_args.model_type}")
-            attn_implementation = "flash_attention_2" if model_args.flash_attn == "fa2" else "eager"
-            config = AutoConfig.from_pretrained(model_args.model_name_or_path)
+            config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
             config.num_labels = model_args.num_labels
-            setattr(config, "attn_implementation", attn_implementation)
-            setattr(config, "_attn_implementation", attn_implementation)
+            if model_args.attn_implementation is not None and model_args.attn_implementation != "auto":
+                setattr(config, "_attn_implementation", model_args.attn_implementation)
             model = AutoModelForTokenClassification.from_pretrained(
                 model_args.model_name_or_path, config=config, **init_kwargs
             )
@@ -480,16 +476,13 @@ def default_value_model_provider(
                 init_kwargs["device_map"] = {"": torch.cuda.current_device()}
             elif model_args.device_map:
                 init_kwargs["device_map"] = model_args.device_map
-            elif model_args.export_dir is None:
-                init_kwargs["device_map"] = "auto"
         logger.info(f"init_kwargs: {init_kwargs}")
         if model_args.model_type in ["auto_token_classification"]:
             logger.info(f"use AutoModelForTokenClassification model {model_args.model_type}")
-            attn_implementation = "flash_attention_2" if model_args.flash_attn == "fa2" else "eager"
-            config = AutoConfig.from_pretrained(model_args.model_name_or_path)
+            config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
             config.num_labels = model_args.num_labels
-            setattr(config, "attn_implementation", attn_implementation)
-            setattr(config, "_attn_implementation", attn_implementation)
+            if model_args.attn_implementation is not None and model_args.attn_implementation != "auto":
+                setattr(config, "_attn_implementation", model_args.attn_implementation)
             model = AutoModelForTokenClassification.from_pretrained(
                 model_args.model_name_or_path, config=config, **init_kwargs
             )

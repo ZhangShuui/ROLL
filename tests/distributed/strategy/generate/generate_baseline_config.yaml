@@ -31,8 +31,6 @@ actor_train:
 
 actor_infer:
   model_args:
-    flash_attn: fa2
-    disable_gradient_checkpointing: true
     dtype: bf16
   generating_args:
     max_new_tokens: ${response_length}
@@ -54,8 +52,7 @@ actor_infer:
 
 reference:
   model_args:
-    flash_attn: fa2
-    disable_gradient_checkpointing: true
+    attn_implementation: fa2
     dtype: bf16
   generating_args:
     max_new_tokens: ${response_length}

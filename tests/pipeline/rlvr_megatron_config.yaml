@@ -79,8 +79,6 @@ validation:
 
 actor_train:
   model_args:
-    flash_attn: fa2
-    disable_gradient_checkpointing: false
     dtype: bf16
     model_type: ~
   training_args:
@@ -118,8 +116,6 @@ actor_train:
 
 actor_infer:
   model_args:
-    flash_attn: fa2
-    disable_gradient_checkpointing: true
     dtype: bf16
   generating_args:
     max_new_tokens: ${response_length}
@@ -141,8 +137,6 @@ actor_infer:
 
 reference:
   model_args:
-    flash_attn: fa2
-    disable_gradient_checkpointing: true
     dtype: bf16
     model_type: ~
   data_args:
@@ -193,7 +187,7 @@ rewards:
 #    tag_included: [reference]
 #    model_args:
 #      model_name_or_path: AI-ModelScope/Qwen2.5-7B-Instruct-RLVR
-#      flash_attn: fa2
+#      attn_implementation: fa2
 #      disable_gradient_checkpointing: true
 #      dtype: bf16
 #      model_type: trl

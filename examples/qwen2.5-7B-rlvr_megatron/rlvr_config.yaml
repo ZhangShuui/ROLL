@@ -86,16 +86,16 @@ validation:
     file_name:
       - data/aime24_25_deal.jsonl
   generating_args:
+    max_new_tokens: ${response_length}
     top_p: 0.6
     top_k: 50
     num_beams: 1
     temperature: 0.6
     num_return_sequences: 1
-  eval_steps: 10
+
 
 actor_train:
   model_args:
-    flash_attn: fa2
     disable_gradient_checkpointing: false
     dtype: bf16
     model_type: ~
@@ -137,7 +137,6 @@ actor_train:
 
 actor_infer:
   model_args:
-    flash_attn: fa2
     disable_gradient_checkpointing: true
     dtype: bf16
   generating_args:
@@ -160,7 +159,6 @@ actor_infer:
 
 reference:
   model_args:
-    flash_attn: fa2
     disable_gradient_checkpointing: true
     dtype: bf16
     model_type: ~
@@ -234,7 +232,7 @@ rewards:
     tag_included: [RLVR]
     model_args:
       model_name_or_path: virtuoussy/Qwen2.5-7B-Instruct-RLVR
-      flash_attn: fa2
+      attn_implementation: fa2
       disable_gradient_checkpointing: true
       dtype: bf16
       model_type: trl

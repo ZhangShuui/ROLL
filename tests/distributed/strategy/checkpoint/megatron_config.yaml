@@ -26,7 +26,6 @@ pretrain: /data/cpfs_0/common/models/Qwen2.5-0.5B-Instruct
 
 actor_train:
   model_args:
-    flash_attn: fa2
     disable_gradient_checkpointing: false
     dtype: bf16
     model_type: ~

@@ -86,7 +86,6 @@ validation:
     file_name:
       - data/aime24_25_deal.jsonl
   generating_args:
-    max_new_tokens: ${response_length}
     top_p: 0.6
     top_k: 50
     num_beams: 1
@@ -126,11 +125,11 @@ actor_train:
   strategy_args:
     strategy_name: megatron_train
     strategy_config:
-      tensor_model_parallel_size: 1
+      tensor_model_parallel_size: 2
       pipeline_model_parallel_size: 2
       virtual_pipeline_model_parallel_size: 8
       expert_model_parallel_size: 4
-      context_parallel_size: 4
+      context_parallel_size: 1
       use_distributed_optimizer: true
       sequence_parallel: true
       moe_token_dispatcher_type: "alltoall"
@@ -153,12 +152,10 @@ actor_infer:
   data_args:
     template: qwen2_5
   strategy_args:
-    strategy_name: vllm
+    strategy_name: sglang
     strategy_config:
-      gpu_memory_utilization: 0.85
+      mem_fraction_static: 0.7
       load_format: dummy
-      tensor_parallel_size: 2
-      sleep_level: 2  # 2 will destroy model parameter and kv_cache after generate to save cpu memory, 1 will destroy kv_cache only.
   num_gpus_per_worker: 2
   device_mapping: list(range(0,24)) # device share with llm reward
   infer_batch_size: 1

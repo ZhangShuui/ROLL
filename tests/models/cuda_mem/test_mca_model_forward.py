@@ -17,7 +17,7 @@ from mcore_adapter.models import AutoModel
 import torch
 import torch.distributed as dist
 
-from roll.third_party.llmtuner.hparams import ModelArguments
+from roll.configs.model_args import ModelArguments
 from roll.utils.functionals import pad_to_length
 from tests.models.cuda_mem.utils import log_gpu_memory_usage
 
@@ -38,7 +38,7 @@ megatron_train_args = TrainingArguments(
     virtual_pipeline_model_parallel_size=vp,
     expert_model_parallel_size=1,
 )
-model_args = ModelArguments(model_name_or_path=path, flash_attn="fa2", dtype="bf16")
+model_args = ModelArguments(model_name_or_path=path, attn_implementation="fa2", dtype="bf16")
 
 MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT: int = 100000
 torch.cuda.memory._record_memory_history(max_entries=MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT, stacks="python")

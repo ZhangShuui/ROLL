@@ -16,7 +16,7 @@ from roll.models.model_providers import default_actor_model_provider
 model_name = "Qwen/Qwen2.5-0.5B-Instruct"
 data_filename = "data/comparison_gpt4_data_zh.json"
 
-model_args: ModelArguments = ModelArguments(model_name_or_path=model_name, flash_attn="fa2", dtype="bf16")
+model_args: ModelArguments = ModelArguments(model_name_or_path=model_name, attn_implementation="fa2", dtype="bf16")
 data_args: DataArguments = DataArguments(
     template="qwen2_5",
     file_name=data_filename,
