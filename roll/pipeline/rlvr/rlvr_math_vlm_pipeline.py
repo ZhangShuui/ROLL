@@ -604,6 +604,11 @@ class RLVRMathVLMPipeline(BasePipeline):
 
                 logger.info(f"pipeline step {global_step} finished")
                 global_step += 1
+
+                if global_step >= self.pipeline_config.max_steps:
+                    logger.info(f"pipeline step {global_step} finished, reached max steps: {self.pipeline_config.max_steps}")
+                    return
+
             logger.info(f"epoch {epoch} finished")
         logger.info("pipeline complete!")
 
