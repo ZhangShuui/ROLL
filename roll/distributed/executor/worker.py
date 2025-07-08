@@ -54,17 +54,6 @@ class Worker:
         if self.rank == 0:
             master_addr = self.get_node_ip()
             master_port = str(self.get_free_port())
-            max_retry_count = int(os.environ.get("MAX_PORT_RETRY_COUNT", 1000))
-            retry_count = 0
-            while retry_count < max_retry_count:
-                master_port = str(self.get_free_port())
-                master_addr_port_key = f"MASTER_ADDR_PORT:{master_addr}:{master_port}"
-                if ray.get(self.shared_storage.get.remote(master_addr_port_key)) is None:
-                    ray.get(self.shared_storage.put.remote(master_addr_port_key, True))
-                    break
-                retry_count += 1
-            if retry_count >= max_retry_count:
-                raise RuntimeError(f"Can not allocate unique MASTER_PORT on {master_addr}.")
             os.environ["MASTER_ADDR"] = master_addr
             os.environ["MASTER_PORT"] = master_port
 
@@ -102,9 +91,27 @@ class Worker:
 
     @staticmethod
     def get_free_port():
-        with socket.socket() as sock:
-            sock.bind(("", 0))
-            return sock.getsockname()[1]
+        def collect_free_port():
+            with socket.socket() as sock:
+                sock.bind(("", 0))
+                return sock.getsockname()[1]
+        shared_storage = SharedStorage.options(
+            name=STORAGE_NAME, get_if_exists=True, namespace=RAY_NAMESPACE
+        ).remote()
+        master_addr = Worker.get_node_ip()
+        max_retry_count = int(os.environ.get("MAX_PORT_RETRY_COUNT", 1000))
+        retry_count = 0
+        master_port = collect_free_port()
+        while retry_count < max_retry_count:
+            master_addr_port_key = f"MASTER_ADDR_PORT:{master_addr}:{master_port}"
+            if ray.get(shared_storage.get.remote(master_addr_port_key)) is None:
+                ray.get(shared_storage.put.remote(master_addr_port_key, True))
+                break
+            master_port = collect_free_port()
+            retry_count += 1
+        if retry_count >= max_retry_count:
+            raise RuntimeError(f"Can not allocate unique MASTER_PORT on {master_addr}.")
+        return master_port
 
     def get_master_addr_and_port(self):
         return self.master_addr, self.master_port
