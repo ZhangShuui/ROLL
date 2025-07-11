@@ -1,8 +1,8 @@
-# 架构设计
+# AgenticPipeline
 
 ## Agentic Pipeline 架构图
 
-![image](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/a/Rj7wg2g9aTYg4kqP/f02190a07077427595eeca25607a4f1d0521.png)
+![Agentic Pipeline 架构图](../../../static/img/AgenticPipeline.jpg)
 
 ## AgenticPipeline
 
