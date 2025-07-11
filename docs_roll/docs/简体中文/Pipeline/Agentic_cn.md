@@ -10,13 +10,13 @@ AgenticPipeline是ROLL框架中的核心组件，用于智能体(Agentic)的强�
 
 ### 主要属性
 
-*   核心配置
+####   核心配置
     
 
 *   pipeline\_config: AgenticPipeline类的核心配置对象，类型为AgenticConfig，包含了整个强化学习训练管线的所有配置参数。
     
 
-*   Actor-Critic架构集群
+####   Actor-Critic架构集群
     
 
 *   actor\_train: AgenticPipeline中的策略网络训练集群，负责执行PPO算法的核心训练逻辑。
@@ -28,7 +28,7 @@ AgenticPipeline是ROLL框架中的核心组件，用于智能体(Agentic)的强�
 *   critic(optional): 估计状态价值函数(仅在GAE模式下使用)
     
 
-*   环境交互调度器
+####  环境交互调度器
     
 
 *   train\_rollout\_scheduler: 训练过程中收集经验数据，其中infer\_cluster=actor\_infer
@@ -36,7 +36,7 @@ AgenticPipeline是ROLL框架中的核心组件，用于智能体(Agentic)的强�
 *   val\_rollout\_scheduler: 验证过程中收集经验数据，用来评估模型性能，其中infer\_cluster=actor\_infer
     
 
-*   控制器和辅助工具
+####   控制器和辅助工具
     
 
 *   kl\_ctrl: 自适应调整KL惩罚系数，防止策略更新偏离参考策略过远
