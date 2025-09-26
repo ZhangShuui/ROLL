@@ -244,7 +244,7 @@ class SgLangStrategy(InferenceStrategy):
     def setup_collective_group(self, model_update_name, comm_plan, backend="nccl"):
         self.model.setup_collective_group(comm_plan=comm_plan, backend=backend, rank_in_cluster=self.worker.rank)
 
-    def broadcast_parameter(self, model_update_name, src_pp_rank, dtype, shape, parameter_name):
+    def broadcast_parameter(self, model_update_name, src_pp_rank, dtype, shape, parameter_name, is_lora=False):
         self.model.broadcast_parameter(src_pp_rank, dtype, shape, parameter_name)
 
     def broadcast_bucket(self, model_update_name, src_pp_rank, meta_infos, bucket_size):
@@ -307,6 +307,8 @@ def create_sampling_params_for_sglang(gen_kwargs):
         stop_token_ids=gen_kwargs["eos_token_id"],
         repetition_penalty=gen_kwargs["repetition_penalty"],
         n=gen_kwargs["num_return_sequences"],
+        stop=gen_kwargs["stop_strings"],
+        no_stop_trim=gen_kwargs.get("include_stop_str_in_output", True),
     )
 
 

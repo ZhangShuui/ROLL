@@ -128,7 +128,7 @@ class RLVRConfig(BaseConfig):
         metadata={"help": "Path to pretrain model directory for the reward model, if available."}
     )
     validation: WorkerConfig = field(
-        default_factory=WorkerConfig,
+        default=None,
         metadata={"help": "Configuration for the validation."}
     )
     actor_train: WorkerConfig = field(
@@ -156,9 +156,13 @@ class RLVRConfig(BaseConfig):
     ppo_epochs: int = field(default=1, metadata={"help": "Number of optimisation epochs per batch of samples"})
     max_grad_norm: float = field(default=1.0, metadata={"help": "Maximum norm"})
     l2: float = field(default=0.0, metadata={"help": "L2 regularization"})
-    lambd: float = field(default=0.95, metadata={"help": "Gamma parameter for advantage calculation"})
-    gamma: float = field(default=1, metadata={"help": "Lambda parameter for advantage calculation"})
+    lambd: float = field(default=0.95, metadata={"help": "Lambda parameter for advantage calculation"})
+    gamma: float = field(default=1, metadata={"help": "Gamma parameter for advantage calculation"})
     pg_clip: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping in PPO policy gradient loss"})
+    use_pg_clip_range: bool = field(default=False, metadata={"help": "Use to change the clipping range of pg_clip"})
+    pg_clip_low: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping lower in PPO policy gradient loss"})
+    pg_clip_high: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping higher in PPO policy gradient loss"})
+    
     value_clip: Optional[float] = field(
         default=None, metadata={"help": "Range for clipping values in loss calculation"}
     )
@@ -188,17 +192,17 @@ class RLVRConfig(BaseConfig):
     adv_estimator: Literal["gae", "reinforce", "grpo"] = field(
         default="gae", metadata={"help": "advantage estimator: gae (GAE)."}
     )
-    reward_norm: Literal["batch", "group", "running", None] = field(
+    norm_mean_type: Literal["batch", "group", "running", None] = field(
         default=None,
         metadata={
-            "help": "Reward normalization type: 'batch' (normalize across batch), 'group' (normalize within prompt groups), 'running' (use running statistics)"
+            "help": "Mean type for reward normalization: 'batch' (normalize across batch), 'group' (normalize within prompt groups), 'running' (use running statistics), None (without subtracting mean)"
         },
     )
-    reward_shift: bool = field(
-        default=False, metadata={"help": "Only subtract mean without dividing by std during reward normalization"}
-    )
-    reward_scale: bool = field(
-        default=False, metadata={"help": "Only divide by std without subtracting mean during reward normalization"}
+    norm_std_type: Literal["batch", "group", "running", None] = field(
+        default=None,
+        metadata={
+            "help": "Std type for reward normalization: 'batch' (normalize across batch), 'group' (normalize within prompt groups), 'running' (use running statistics), None (without dividing by std)"
+        },
     )
     add_token_level_kl: bool = field(default=False, metadata={"help": "Add token level kl penalty"})
     critic_warmup: int = field(
@@ -230,7 +234,7 @@ class RLVRConfig(BaseConfig):
     )
     dual_clip_loss: bool = field(default=False, metadata={"help": "Use dual clip loss"})
     loss_agg_mode: Literal["token-mean", "seq-mean-token-sum", "seq-mean-token-mean", "seq-mean-token-sum-norm"] = (
-        field(default="seq-mean-token-sum", metadata={"help": "Loss aggregation mode"})
+        field(default="seq-mean-token-mean", metadata={"help": "Loss aggregation mode"})
     )
     importance_sampling: Literal["token", "seq"] = (
         field(default="token", metadata={"help": "policy importance sampling"})
@@ -289,6 +293,29 @@ class RLVRConfig(BaseConfig):
             self.tag_2_domain = {
                 tag: key for key, worker_config in self.rewards.items() for tag in worker_config.tag_included
             }
+        if self.actor_infer:
+            self.actor_infer.generating_args.max_new_tokens = self.sequence_length - self.prompt_length
+            logger.warning(f"rewrite actor_infer max_new_tokens: {self.actor_infer.generating_args.max_new_tokens}")
+        if self.validation:
+            self.validation.generating_args.max_new_tokens = self.val_sequence_length - self.val_prompt_length
+            logger.warning(f"rewrite validation max_new_tokens: {self.validation.generating_args.max_new_tokens}")
+
+        # infer the required num nodes
+        total_devices = []
+        for attribute_name in dir(self):
+            attribute = getattr(self, attribute_name)
+            if isinstance(attribute, WorkerConfig):
+                if attribute.device_mapping is not None:
+                    total_devices.extend(attribute.device_mapping)
+        for worker_config in self.rewards.values():
+            if worker_config.device_mapping is not None:
+                total_devices.extend(worker_config.device_mapping)
+        if len(total_devices) > 0:
+            max_gpu_num = max(total_devices) + 1
+            if max_gpu_num <= self.num_gpus_per_node:
+                self.num_nodes = 1
+            else:
+                self.num_nodes = (max_gpu_num + self.num_gpus_per_node - 1) // self.num_gpus_per_node
 
     def set_max_steps(self, max_steps: int):
         actor_backward_batch_size = (

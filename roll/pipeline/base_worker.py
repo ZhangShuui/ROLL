@@ -15,7 +15,7 @@ from roll.distributed.scheduler.protocol import DataProto
 from roll.distributed.strategy.factory import create_strategy
 from roll.distributed.strategy.strategy import InferenceStrategy, TrainStrategy
 from roll.models.model_providers import default_actor_model_provider, default_value_model_provider, \
-    default_reward_model_provider
+    default_reward_model_provider, default_diffusion_module_provider
 from roll.utils.checkpoint_manager import download_model
 from roll.utils.context_managers import state_offload_manger
 from roll.utils.functionals import (
@@ -46,7 +46,11 @@ class ActorWorker(Worker):
 
         self.strategy = create_strategy(worker=self)
 
-        self.strategy.initialize(model_provider=default_actor_model_provider)
+        if self.worker_config.model_args.model_type == "diffusion_module":
+            self.strategy.initialize(model_provider=default_diffusion_module_provider)
+        else:
+            self.strategy.initialize(model_provider=default_actor_model_provider)
+        
         self.tokenizer = self.strategy.tokenizer
         if self.pipeline_config.resume_from_checkpoint:
             load_dir = download_model(self.pipeline_config.resume_from_checkpoint)
@@ -127,9 +131,7 @@ class ActorWorker(Worker):
         else:
             generation_config = data.meta_info["generation_config"]
 
-        generation_config["eos_token_id"] = [
-            self.tokenizer.eos_token_id
-        ] + self.tokenizer.additional_special_tokens_ids
+        generation_config["eos_token_id"] = [self.tokenizer.eos_token_id, self.tokenizer.pad_token_id]
         generation_config["pad_token_id"] = self.tokenizer.pad_token_id
 
         global_step = data.meta_info.get("global_step", 0)
@@ -268,8 +270,10 @@ class ActorWorker(Worker):
 
         ratio = (log_probs - old_log_probs).exp()
 
+        pg_clip_low = self.pipeline_config.pg_clip_low if self.pipeline_config.use_pg_clip_range else self.pipeline_config.pg_clip
+        pg_clip_high = self.pipeline_config.pg_clip_high if self.pipeline_config.use_pg_clip_range else self.pipeline_config.pg_clip  
         surr1 = ratio * advantages
-        surr2 = ratio.clamp(1 - self.pipeline_config.pg_clip, 1 + self.pipeline_config.pg_clip) * advantages
+        surr2 = ratio.clamp(1 - pg_clip_low, 1 + pg_clip_high) * advantages
         pg_loss = -torch.min(surr1, surr2)
         if self.pipeline_config.dual_clip_loss:
             dual_clip_loss = -torch.max(-pg_loss, (1 + self.pipeline_config.pg_clip * 2) * advantages)
@@ -287,23 +291,21 @@ class ActorWorker(Worker):
         policykl = compute_approx_kl(
             log_probs=log_probs, log_probs_base=old_log_probs, action_mask=response_mask, kl_penalty="kl"
         )
-
-        clipped_low = (ratio < 1 - self.pipeline_config.pg_clip).float()
-        clipped_high = (ratio > 1 + self.pipeline_config.pg_clip).float()
+        clipped_low = (ratio < 1 - pg_clip_low).float()
+        clipped_high = (ratio > 1 + pg_clip_high).float()
         clipped = (clipped_low + clipped_high).float()
-
-        entropy = self.strategy.op_compute_entropy(logits=output_tensor, attention_mask=data.batch["response_mask"])
-        entropy_loss = agg_loss(
-            loss_mat=entropy,
-            loss_mask=response_mask,
-            loss_agg_mode=self.pipeline_config.loss_agg_mode,
-        )
 
         if self.pipeline_config.use_kl_loss:
             total_loss = pg_loss + kl_loss * self.pipeline_config.kl_loss_coef
         else:
             total_loss = pg_loss
         if self.pipeline_config.entropy_loss_coef > 0:
+            entropy = self.strategy.op_compute_entropy(logits=output_tensor, attention_mask=data.batch["response_mask"])
+            entropy_loss = agg_loss(
+                loss_mat=entropy,
+                loss_mask=response_mask,
+                loss_agg_mode=self.pipeline_config.loss_agg_mode,
+            )
             total_loss = total_loss - entropy_loss * self.pipeline_config.entropy_loss_coef
 
         pg_metrics = {
@@ -370,9 +372,7 @@ class ActorWorker(Worker):
                     self.logger.info(f"is_num_return_sequences_expand is True, set num_return_sequences to 1.")
             else:
                 generation_config = data.meta_info["generation_config"]
-            generation_config["eos_token_id"] = [
-                self.tokenizer.eos_token_id
-            ] + self.tokenizer.additional_special_tokens_ids
+            generation_config["eos_token_id"] = [self.tokenizer.eos_token_id, self.tokenizer.pad_token_id]
             generation_config["pad_token_id"] = self.tokenizer.pad_token_id
             data.meta_info["generation_config"] = generation_config
             self.response_call_back_fns[data.meta_info["request_id"]] = data.meta_info.pop("response_callback_fn")

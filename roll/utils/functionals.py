@@ -1,3 +1,5 @@
+import inspect
+
 import enum
 import traceback
 from typing import Dict, List, Optional, Tuple, Union
@@ -262,18 +264,14 @@ def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int = None) -> to
         mask_sum = mask.sum(axis=dim)
         return torch.where(mask_sum > 0, (tensor * mask).sum(axis=dim) / (mask_sum + 1e-8), torch.zeros_like(mask_sum))
     else:
-        return (
-            (tensor * mask).sum() / (mask.sum() + 1e-8) if mask.sum() > 0 else torch.tensor(0.0, device=tensor.device)
-        )
+        return (tensor * mask).sum() / (mask.sum() + 1e-8)
 
 def masked_sum(tensor: torch.Tensor, mask: torch.Tensor, dim: int = None) -> torch.Tensor:
     if dim is not None:
         mask_sum = mask.sum(axis=dim)
         return torch.where(mask_sum > 0, (tensor * mask).sum(axis=dim), torch.zeros_like(mask_sum))
     else:
-        return (
-            (tensor * mask).sum() if mask.sum() > 0 else torch.tensor(0.0, device=tensor.device)
-        )
+        return (tensor * mask).sum()
 
 
 def masked_var(values, mask, unbiased=True):
@@ -455,14 +453,41 @@ def expand_to_token_level(data: "DataProto"):
     return token_level_rewards
 
 
-def batch_reward_norm(response_level_rewards: torch.Tensor, div_std=True):
-    batch_mean = response_level_rewards.mean()
-    if div_std:
-        normalized_rewards = (response_level_rewards - batch_mean) / (response_level_rewards.std() + 1e-6)
+def reward_norm(response_level_rewards: torch.Tensor, n_sample=-1, running_ctrl={}, norm_mean_type=None, norm_std_type=None):
+    group_mode = (norm_mean_type == "group") or (norm_std_type == "group")
+    if group_mode and n_sample > 0:
+        reshape_reward = response_level_rewards.reshape(*response_level_rewards.size()[:-1], -1, n_sample)
+    if norm_mean_type == "running" or norm_std_type == "running":
+        running = running_ctrl["domain"]
+        running.update(response_level_rewards)
+    # 均值计算
+    if norm_mean_type == "batch":
+        reward_mean = response_level_rewards.mean()
+    elif norm_mean_type == "group":
+        reward_mean = reshape_reward.mean(dim=-1, keepdim=True)
+    elif norm_mean_type == "running":
+        reward_mean = running.mean
+    elif norm_mean_type == None:
+        reward_mean = 0.0
+    # 标准差计算
+    if norm_std_type == "batch":
+        reward_std = response_level_rewards.std()
+    elif norm_std_type == "group":
+        reward_std = torch.std(reshape_reward, dim=-1, keepdim=True)
+    elif norm_std_type == "running":
+        reward_std = running.std
+    # 选择基础奖励值
+    rewards = reshape_reward if norm_mean_type == "group" else response_level_rewards
+    # 标准化奖励
+    if norm_std_type is not None:
+        normalized_rewards = (rewards - reward_mean) / (reward_std + 1e-6)
     else:
-        normalized_rewards = response_level_rewards - batch_mean
-    return normalized_rewards
+        normalized_rewards = (rewards - reward_mean)
 
+    # 如果是对 group mean 归一化，需要恢复原始形状
+    if norm_mean_type == "group":
+        normalized_rewards = normalized_rewards.reshape(*response_level_rewards.size())
+    return normalized_rewards
 
 def group_reward_norm(data: "DataProto", n_sample=-1, div_std=True, div_std_global=False):
     assert n_sample > 1, "n_sample must > 1"
@@ -529,42 +554,17 @@ def compute_token_reward(data: "DataProto", pipeline_config: RLVRConfig, kl_ctrl
 def reward_postprocess(data: "DataProto", pipeline_config: RLVRConfig, running_ctrl):
     response_level_rewards = data.batch["response_level_rewards"].clone().detach()
     response_level_metrics = {"critic/reward_clip_frac": 0.0}
-    # 对reward进行处理: 可以选择不同的normalization方法
-    # 使用group-based normalization (按prompt分组)
-    if pipeline_config.adv_estimator == "grpo" or pipeline_config.reward_norm == "group":
-        if pipeline_config.reward_shift:
-            data = group_reward_norm(
-                data,
-                n_sample=pipeline_config.actor_infer.generating_args.num_return_sequences,
-                div_std=False,
-            )
-        else:
-            data = group_reward_norm(
-                data,
-                n_sample=pipeline_config.actor_infer.generating_args.num_return_sequences,
-                div_std=True,
-            )
-        response_level_rewards = data.batch["response_level_rewards"].clone().detach()
+    # 对reward进行处理: 可以灵活定义不同的normalization方法
+    if pipeline_config.adv_estimator == "grpo":
+        pipeline_config.norm_mean_type, pipeline_config.norm_std_type = "group", "group"
 
-    # 使用batch-based normalization (整个batch)
-    elif pipeline_config.reward_norm == "batch":
-        if hasattr(pipeline_config, "reward_shift") and pipeline_config.reward_shift:
-            response_level_rewards = batch_reward_norm(response_level_rewards, div_std=False)
-        else:
-            response_level_rewards = batch_reward_norm(response_level_rewards, div_std=True)
-
-    # 使用running statistics进行normalization
-    elif pipeline_config.reward_norm == "running":
-        running = running_ctrl["domain"]
-        running.update(response_level_rewards)
-        mean = running.mean
-        std = running.std + torch.finfo(response_level_rewards.dtype).eps
-        if pipeline_config.reward_shift:
-            response_level_rewards = response_level_rewards - mean
-        elif pipeline_config.reward_scale:
-            response_level_rewards = response_level_rewards / std
-        else:
-            response_level_rewards = (response_level_rewards - mean) / std
+    response_level_rewards = reward_norm(
+                    response_level_rewards,
+                    n_sample=pipeline_config.actor_infer.generating_args.num_return_sequences,
+                    running_ctrl=running_ctrl,
+                    norm_mean_type=pipeline_config.norm_mean_type,
+                    norm_std_type=pipeline_config.norm_std_type
+                    )
 
     # 对reward进行clip
     if pipeline_config.reward_clip:
@@ -633,8 +633,6 @@ def get_sample_level_mask(data: "DataProto", pipeline_config: RLVRConfig):
 
     expanded_sample_mask = final_sample_mask.unsqueeze(-1).expand_as(response_mask)
     final_response_mask = response_mask * expanded_sample_mask
-    if final_response_mask.sum() == 0:
-        final_response_mask = data.batch["response_mask"][:, 1:].clone()
     mask_metrics["actor/final_mask_ratio"] = final_sample_mask.mean().item()
     mask_metrics["actor/samples_used"] = final_sample_mask.sum().item()
     mask_metrics["actor/samples_total"] = float(batch_size)
@@ -691,6 +689,10 @@ def compute_advantage(
 ):
     if response_mask is None:
         response_mask = data.batch["response_mask"][:, 1:]
+    if response_mask.sum() == 0:
+        whiten_rewards = False
+        whiten_advantages = False
+        logger.info("Warning: domain final_response_mask.sum() == 0! All masked_whiten will be skipped.")
 
     token_level_rewards = data.batch["token_level_rewards"].float()
     if whiten_rewards:
@@ -703,15 +705,7 @@ def compute_advantage(
         advantages, returns = compute_gae_advantage_return(
             token_level_rewards=token_level_rewards, values=values, gamma=gamma, lambd=lambd
         )
-    elif adv_estimator == "reinforce":
-        advantages, returns = compute_reinforce_return(
-            token_level_rewards=token_level_rewards, gamma=gamma, lambd=lambd
-        )
-    elif adv_estimator == "grpo":
-        advantages, returns = compute_reinforce_return(
-            token_level_rewards=token_level_rewards, gamma=gamma, lambd=lambd
-        )
-    elif adv_estimator == "gigpo":
+    elif adv_estimator in ["reinforce", "grpo", "gigpo", "step_reinforce"]:
         advantages, returns = compute_reinforce_return(
             token_level_rewards=token_level_rewards, gamma=gamma, lambd=lambd
         )
@@ -749,6 +743,8 @@ def postprocess_generate(
     eos_token_id,
     pad_token_id,
     fill_eos_token=False,
+    output_logprobs: Optional[list[list[float]]]=None,
+    pad_to_seq_len=True,
 ) -> "DataProto":
     from roll.distributed.scheduler.protocol import DataProto
 
@@ -768,9 +764,10 @@ def postprocess_generate(
     input_batch_size = input_ids.size(0)
     prompt_length = input_ids.size(1)
 
-    output = pad_to_length(output, sequence_length, pad_token_id)
-
-    assert output.shape[1] == sequence_length, f"output shape {output.shape} != {sequence_length}"
+    if pad_to_seq_len:
+        output = pad_to_length(output, sequence_length, pad_token_id)
+        assert output.shape[1] == sequence_length, f"output shape {output.shape} != {sequence_length}"
+    sequence_length = output.shape[1]
 
     prompt = output[:, :prompt_length].clone()  # (bs, prompt_length)
     response = output[:, prompt_length:].clone()  # (bs, response_length)
@@ -799,6 +796,7 @@ def postprocess_generate(
     assert attention_mask.any(dim=1).all(), f"has all 0 attention_mask, {attention_mask} {input_ids}"
     first_one = attention_mask.float().argmax(dim=1)
     new_response_mask = torch.zeros_like(attention_mask)  # response mask for cat input_ids
+    logprobs = torch.zeros([output_batch_size, sequence_length - 1], dtype=torch.float32) if output_logprobs is not None else None
     for i in range(output_batch_size):
         shift = first_one[i].item()
         if shift > 0:
@@ -809,7 +807,12 @@ def postprocess_generate(
         response_length = response_mask[i].sum().int().item()
         attention_mask[i][:valid_length] = 1
         attention_mask[i][valid_length:] = 0
-        new_response_mask[i][valid_length - response_length : valid_length] = 1
+        prompt_len = valid_length - response_length
+        new_response_mask[i][prompt_len : valid_length] = 1
+        if logprobs is not None:
+            logprobs[i][prompt_len - 1 : valid_length - 1] = torch.tensor(
+                output_logprobs[i][:response_length], dtype=logprobs.dtype
+            )
         if position_ids.dim() == 3 and shift > 0:
             # shift as output to convert to right padding
             # NOTE: left shift without clear right might lead to unclean values
@@ -845,6 +848,8 @@ def postprocess_generate(
             prompt_id.squeeze().unsqueeze(1).repeat(1, num_return_sequences).view(output_batch_size, -1).squeeze(-1)
         )
         batch["prompt_id"] = prompt_id
+    if logprobs is not None:
+        batch["infer_logprobs"] = logprobs
     return DataProto(batch=batch)
 
 
@@ -866,3 +871,52 @@ def separate_prompt_response(
     prompt_ids = torch.where(prompt_mask, input_ids, torch.full_like(input_ids, pad_id))
     response_ids = torch.where(response_mask_valid, input_ids, torch.full_like(input_ids, pad_id))
     return prompt_ids, response_ids
+
+def filter_func_args(func, forward_args):
+    signature = inspect.signature(func)
+    forward_params = signature.parameters.keys()
+    valid_args = {k: v for k, v in forward_args.items() if k in forward_params}
+    return valid_args
+
+
+def aggregate_metrics(history_metrics: List[Dict], metrics_agg_mode: Dict[str, str]) -> Dict[str, float]:
+    """
+    Aggregate metrics from history based on the specified aggregation modes.
+
+    Args:
+        history_metrics: List of dictionaries containing metrics for each step
+        metrics_agg_mode: Dictionary mapping metric names to aggregation modes
+                         Supported modes: "sum", "mean", "min", "max", "last", "first"
+
+    Returns:
+        Dictionary of aggregated metrics
+    """
+    # Collect all metrics from history
+    all_metrics = {}
+    for metrics in history_metrics:
+        for k, v in metrics.items():
+            if k not in all_metrics:
+                all_metrics[k] = []
+            all_metrics[k].append(float(v))
+
+    # Aggregate metrics based on mode
+    aggregated_metrics = {}
+    for metric_name, values in all_metrics.items():
+        mode = metrics_agg_mode.get(metric_name, "mean")  # default to mean
+        if mode == "sum":
+            aggregated_metrics[metric_name] = float(np.sum(values))
+        elif mode == "mean":
+            aggregated_metrics[metric_name] = float(np.mean(values))
+        elif mode == "min":
+            aggregated_metrics[metric_name] = float(np.min(values))
+        elif mode == "max":
+            aggregated_metrics[metric_name] = float(np.max(values))
+        elif mode == "last":
+            aggregated_metrics[metric_name] = float(values[-1])
+        elif mode == "first":
+            aggregated_metrics[metric_name] = float(values[0])
+        else:
+            # Default to mean for unknown modes
+            aggregated_metrics[metric_name] = float(np.mean(values))
+
+    return aggregated_metrics

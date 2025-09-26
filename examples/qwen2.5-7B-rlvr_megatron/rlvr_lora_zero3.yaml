@@ -31,7 +31,7 @@ checkpoint_config:
 
 track_with: tensorboard
 tracker_kwargs:
-  log_dir: /data/oss_bucket_0/shidie/llm/tensorboard/roll_exp/rlvr
+  log_dir: /data/oss_bucket_0/rl_examples/llm/tensorboard/roll_exp/rlvr
 
 num_gpus_per_node: 8
 
@@ -57,9 +57,8 @@ advantage_clip: 2.0
 dual_clip_loss: true
 
 # normalize
-reward_norm: null
-reward_shift: false
-reward_scale: false
+norm_mean_type: ~
+norm_std_type: ~
 
 # data mask
 max_len_mask: true
