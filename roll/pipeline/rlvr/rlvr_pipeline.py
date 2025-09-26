@@ -14,6 +14,7 @@ from ray.util.timer import _Timer
 
 from roll.datasets.chat_template import get_chat_template
 from roll.datasets.collator import DataCollatorWithPaddingForPaddedKeys
+from roll.datasets.dataset import get_dataset
 from roll.distributed.executor.cluster import Cluster
 from roll.distributed.scheduler.generate_scheduler import DynamicSamplingScheduler
 from roll.distributed.scheduler.protocol import DataProto
@@ -47,39 +48,38 @@ def is_lora_training(pipeline_config: RLVRConfig) -> bool:
     return True
 
 
-def preprocess_dataset(dataset, prompt_len, encode_function, num_proc):
-    # 处理数据
-    print(f"Begin : {dataset}")
+def preprocess_dataset(dataset, prompt_len, encode_function, data_args):
+    logger.info(f"Begin : {dataset}")
     dataset = dataset.map(
         encode_function,
         batched=True,
-        num_proc=num_proc,
+        num_proc=data_args.preprocessing_num_workers,
         desc="Encoding dataset",
         load_from_cache_file=False,
     )
     # 过滤cutoff
     dataset = dataset.filter(
         lambda data_i: 5 < len(data_i["input_ids"]) <= prompt_len,
-        num_proc=num_proc,
+        num_proc=data_args.preprocessing_num_workers,
         desc="Filtering dataset",
     )
-    print(f"Filtering prompt len: {dataset}")
-    print(f"Encoding: {dataset}")
+    logger.info(f"Filtering prompt len: {dataset}")
+    logger.info(f"Encoding: {dataset}")
     return dataset
 
 
-def get_encode_function(template_name, tokenizer):
+def get_encode_function(template_name, data_args, tokenizer):
     chat_template_func = get_chat_template(template_name, tokenizer)
 
     def encode_function(data_i):
         text_list = []
-        if "messages" in data_i:
-            for messages in data_i["messages"]:
+        if (message_key := getattr(data_args, "messages", "messages")) in data_i:
+            for messages in data_i[message_key]:
                 if isinstance(messages, str):
                     messages = json.loads(messages)
                 text_list.append(chat_template_func(messages))
-        elif "prompt" in data_i:
-            for prompt in data_i["prompt"]:
+        elif (prompt_key := getattr(data_args, "prompt", "prompt")) in data_i:
+            for prompt in data_i[prompt_key]:
                 text_list.append(prompt)
         encodings = tokenizer(text_list)
         return encodings
@@ -127,17 +127,14 @@ class RLVRPipeline(BasePipeline):
 
         self.tokenizer = default_tokenizer_provider(model_args=self.pipeline_config.actor_train.model_args)
 
-        dataset_paths = []
-        if self.pipeline_config.actor_train.data_args.file_name:
-            dataset_paths.extend(self.pipeline_config.actor_train.data_args.file_name)
 
-        print(f'load_dataset_paths: {chr(10)} {chr(10).join(dataset_paths)}')
-        dataset = datasets.load_dataset('json', data_files=dataset_paths)['train']
+        logger.info(f'Use training dataset type: {self.pipeline_config.actor_train.data_args.dataset_type}')
+        dataset = get_dataset(data_args=self.pipeline_config.actor_train.data_args)
+
 
         self.val_dataset = None
-        if self.pipeline_config.validation:
-            val_dataset_paths = self.pipeline_config.validation.data_args.file_name
-            self.val_dataset = datasets.load_dataset("json", data_files=val_dataset_paths)["train"]
+        if self.pipeline_config.validation.data_args.file_name:
+            self.val_dataset = get_dataset(data_args=self.pipeline_config.validation.data_args)
 
         # 加上format，然后转ids的func
         template_name = (
@@ -145,13 +142,13 @@ class RLVRPipeline(BasePipeline):
             if self.pipeline_config.global_template
             else self.pipeline_config.actor_train.data_args.template
         )
-        encode_function = get_encode_function(template_name, self.tokenizer)
+        encode_function = get_encode_function(template_name, self.pipeline_config.actor_train.data_args, self.tokenizer)
 
         dataset = preprocess_dataset(
             dataset,
             self.pipeline_config.prompt_length,
             encode_function,
-            num_proc=self.pipeline_config.actor_train.data_args.preprocessing_num_workers,
+            data_args=self.pipeline_config.actor_train.data_args,
         )
         # update domain field
         dataset = dataset.map(
@@ -174,7 +171,7 @@ class RLVRPipeline(BasePipeline):
                 self.val_dataset,
                 self.pipeline_config.prompt_length,
                 encode_function,
-                num_proc=self.pipeline_config.actor_train.data_args.preprocessing_num_workers,
+                data_args=self.pipeline_config.validation.data_args,
             )
             self.val_dataset = self.val_dataset.map(
                 partial(update_dataset_domain, self.pipeline_config.tag_2_domain),
@@ -184,8 +181,8 @@ class RLVRPipeline(BasePipeline):
             )
 
         assert 'domain' in dataset.column_names, "domain field should set in dataset"
-        assert 'domain' in self.val_dataset.column_names, "domain field should set in val dataset"
-        print(dataset)
+        if self.val_dataset:
+            assert 'domain' in self.val_dataset.column_names, "domain field should set in val dataset"
 
         self.kl_ctrl = get_kl_controller(
             init_kl_coef=self.pipeline_config.init_kl_coef,
@@ -271,7 +268,7 @@ class RLVRPipeline(BasePipeline):
 
         if self.val_dataset:
             val_pipeline_config = copy.deepcopy(self.pipeline_config)
-            val_pipeline_config.use_additional_prompts = False
+            val_pipeline_config.is_use_additional_prompts = False
             self.val_generate_scheduler = DynamicSamplingScheduler.options(
                 scheduling_strategy=NodeAffinitySchedulingStrategy(
                     node_id=ray.get_runtime_context().get_node_id(),
@@ -475,9 +472,24 @@ class RLVRPipeline(BasePipeline):
                         domain_metrics = reduce_metrics(domain_batch.meta_info.pop("metrics", {}))
                         metrics_mgr.add_domain_metrics(domain, domain_metrics)
                         batch_list.append(domain_batch)
-                    metrics_mgr.add_metric("time/compute_advantage", compute_advantage_timer.last)
 
                 batch = DataProto.concat(batch_list)
+
+                if batch.batch["final_response_mask"].sum() == 0:
+                    logger.info("Warning: final_response_mask.sum() == 0! Current step will be skipped.")
+                    metrics_mgr.add_metric("mask/final_mask_sum_eq_0", 1)
+                    metrics = metrics_mgr.get_metrics()
+                    # do ckpt
+                    self.state.step = global_step
+                    self.state.log_history.append(metrics)
+                    for domain, scheduler in self.generate_schedulers.items():
+                        self.state.kv[f"scheduler_state_{domain}"] = ray.get(scheduler.get_scheduler_state.remote())
+                    self.do_checkpoint(global_step=global_step)
+                    self.tracker.log(values=metrics, step=global_step)
+                    continue
+                else:
+                    metrics_mgr.add_metric("mask/final_mask_sum_eq_0", 0)
+
                 batch.reorder(indices=torch.argsort(batch.batch["prompt_id"]))
                 batch.pop("prompt_id")
 
@@ -581,7 +593,7 @@ class RLVRPipeline(BasePipeline):
         grouped_batch = epoch_batch.group_by("tag")
         for group_key, group_batch in grouped_batch.items():
             score_mean = group_batch.batch["scores"].mean().item()
-            print(f"{group_key}:  {score_mean}")
+            logger.info(f"val_correct/{group_key}:  {score_mean}")
             val_metrics_mgr.add_domain_metrics(
                 "val_correct", {f"{group_key}/mean": (group_batch.batch["scores"] == 1).detach().float().mean().item()}
             )

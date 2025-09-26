@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 
 @dataclass
@@ -50,6 +50,14 @@ class GeneratingArguments:
         default=1,
         metadata={"help": "The number of independently computed returned sequences for each element in the batch."},
     )
+    stop_strings: Optional[List[str]] = field(
+        default=None,
+        metadata={"help": "A list of strings that should terminate generation if the model outputs them."},
+    )
+    include_stop_str_in_output: Optional[bool] = field(
+        default=None,
+        metadata={"help": "Whether to include the stop strings in output text."},
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         args = asdict(self)
@@ -57,4 +65,10 @@ class GeneratingArguments:
             args.pop("max_length", None)
         else:
             args.pop("max_new_tokens", None)
+        if self.include_stop_str_in_output is None:
+            args.pop("include_stop_str_in_output", None)
         return args
+
+    def __post_init__(self):
+        if self.stop_strings is not None:
+            self.stop_strings = list(self.stop_strings)

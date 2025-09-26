@@ -28,6 +28,7 @@ except Exception as e:
 from roll.configs import ModelArguments
 from roll.utils.checkpoint_manager import download_model, file_lock_context
 from roll.utils.logging import get_logger
+from roll.utils.packages import is_transformers_version_greater_than
 
 
 logger = get_logger()
@@ -43,8 +44,12 @@ def prepare_automap_files(model_path: str):
             get_cached_module_file(model_path, file_name)
 
 
-def default_tokenizer_provider(model_args: "ModelArguments"):
-    model_name_or_path = download_model(model_args.model_name_or_path)
+def default_tokenizer_provider(model_args: "ModelArguments", model_name_or_path: str=None):
+    if model_args.model_type == "diffusion_module":
+        return None
+    if model_name_or_path is None:
+        model_name_or_path = model_args.model_name_or_path
+    model_name_or_path = download_model(model_name_or_path)
     prepare_automap_files(model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(
         model_name_or_path,
@@ -56,7 +61,11 @@ def default_tokenizer_provider(model_args: "ModelArguments"):
     return tokenizer
 
 
-def default_processor_provider(model_args: "ModelArguments"):
+def default_processor_provider(model_args: "ModelArguments", model_name_or_path: str=None):
+    if model_args.model_type == "diffusion_module":
+        return None
+    if model_name_or_path is None:
+        model_name_or_path = model_args.model_name_or_path
     model_name_or_path = download_model(model_args.model_name_or_path)
     prepare_automap_files(model_name_or_path)
     try:
@@ -359,6 +368,22 @@ def patch_model(model, config, use_mcore):
                 model.forward = types.MethodType(forward_patch, model)
 
 
+def default_diffusion_module_provider(
+    tokenizer: None,
+    model_args: ModelArguments,
+    training_args: TrainingArguments = None,
+    is_trainable: Optional[bool] = False,
+):
+    if model_args.model_config_kwargs["model_name"] == "wan2_2":
+        from roll.pipeline.diffusion.modules.wan_module import WanTrainingModule
+        print(f"{model_args.model_config_kwargs=}")
+        training_module =  WanTrainingModule(**model_args.model_config_kwargs)
+    else:
+        raise NotImplementedError(f"model_type {model_args.model_type} not implemented yet")
+
+    return training_module
+
+
 def default_actor_model_provider(
     tokenizer: "PreTrainedTokenizer",
     model_args: "ModelArguments",
@@ -561,7 +586,7 @@ def get_extra_data_provider(model_name_or_path: str, processor=None):
     config = AutoConfig.from_pretrained(model_name_or_path)
     if "qwen2" in config.model_type:
         import types
-        from transformers.models.qwen2_vl import Qwen2VLForConditionalGeneration
+
         from transformers import BatchFeature  # help define a object to accesss attr
 
         dummy_self = BatchFeature(
@@ -576,7 +601,14 @@ def get_extra_data_provider(model_name_or_path: str, processor=None):
                 )
             }
         )
-        get_rope_index = types.MethodType(Qwen2VLForConditionalGeneration.get_rope_index, dummy_self)
+        if is_transformers_version_greater_than("4.52.0"):
+            from transformers.models.qwen2_vl import Qwen2VLModel
+
+            get_rope_index = types.MethodType(Qwen2VLModel.get_rope_index, dummy_self)
+        else:
+            from transformers.models.qwen2_vl import Qwen2VLForConditionalGeneration
+
+            get_rope_index = types.MethodType(Qwen2VLForConditionalGeneration.get_rope_index, dummy_self)
 
         def extra_data_provider(
             input_ids: torch.LongTensor,

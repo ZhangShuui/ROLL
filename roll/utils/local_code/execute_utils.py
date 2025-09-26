@@ -11,41 +11,7 @@ import signal
 import tempfile
 import sys
 
-BASE_IMPORTS = """from itertools import accumulate, chain, combinations, count, permutations, product, groupby, islice, repeat
-from copy import deepcopy
-from string import ascii_lowercase
-from math import floor, log2, log10, sqrt, comb, gcd, ceil, inf, isqrt
-from collections import defaultdict, deque, Counter
-from bisect import bisect, bisect_left, bisect_right, insort
-from heapq import heappush, heappop, heapify, merge
-from functools import reduce, cache, lru_cache
-from random import randrange, shuffle
-from operator import itemgetter, sub
-from re import search as re_search  # Assuming 're' refers to a regex search
-from os.path import commonprefix
-from typing import List, Tuple, Dict, Set, Optional, Union, Any, Callable, Iterable, Iterator, Generator
-import copy
-import string
-import math
-import collections
-import bisect
-import heapq
-import functools
-import random
-import itertools
-import operator
-import re
-import numpy as np
-import pandas as pd
-from math import log, prod  # 'log' and 'prod' are functions in the math module
-from collections import deque, defaultdict, Counter, OrderedDict
-from itertools import accumulate, permutations, combinations, product, groupby, islice, chain, repeat, zip_longest, cycle
-from functools import lru_cache, reduce, partial
-# from sortedcontainers import SortedList, SortedDict, SortedSet
-# import sortedcontainers
-from operator import iand
-import sys
-"""  # noqa: E501
+BASE_IMPORTS = "from string import *\nfrom re import *\nfrom datetime import *\nfrom collections import *\nfrom heapq import *\nfrom bisect import *\nfrom copy import *\nfrom math import *\nfrom random import *\nfrom statistics import *\nfrom itertools import *\nfrom functools import *\nfrom operator import *\nfrom io import *\nfrom sys import *\nfrom json import *\nfrom builtins import *\nfrom typing import *\nimport string\nimport re\nimport datetime\nimport collections\nimport heapq\nimport bisect\nimport copy\nimport math\nimport random\nimport statistics\nimport itertools\nimport functools\nimport operator\nimport io\nimport sys\nimport json\nfrom typing import List, Dict, Any, Optional, Tuple\nfrom math import inf\nsys.setrecursionlimit(6*10**5)\n"
 
 
 def codeexecute_check_correctness(check_program, timeout=3):

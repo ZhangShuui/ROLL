@@ -15,7 +15,6 @@ from transformers import set_seed
 from vllm import RequestOutput, SamplingParams
 from vllm.lora.request import LoRARequest
 from vllm.utils import random_uuid
-import vllm
 
 from mcore_adapter.models.converter.convert_utils import RecvBucketManager
 from roll.distributed.executor.worker import Worker
@@ -79,7 +78,6 @@ class VllmStrategy(InferenceStrategy):
                 ),  # potentially hangs in tp>1
                 "enable_prefix_caching": vllm_config.get("enable_prefix_caching", False),
                 "load_format": vllm_config.get("load_format", "dummy"),  # use model update passed value
-                "compilation_config":vllm.config.CompilationConfig(),
             }
         )
         self.is_lora = self.worker_config.model_args.lora_target is not None
@@ -360,6 +358,8 @@ def create_sampling_params_for_vllm(gen_kwargs):
             best_of=gen_kwargs["num_beams"],
             use_beam_search=True,
             logprobs=0,
+            stop=gen_kwargs["stop_strings"],
+            include_stop_str_in_output=gen_kwargs.get("include_stop_str_in_output", True),
         )
     return SamplingParams(
         max_tokens=gen_kwargs["max_new_tokens"],
@@ -370,6 +370,8 @@ def create_sampling_params_for_vllm(gen_kwargs):
         repetition_penalty=gen_kwargs["repetition_penalty"],
         n=gen_kwargs["num_return_sequences"],
         logprobs=0,
+        stop=gen_kwargs["stop_strings"],
+        include_stop_str_in_output=gen_kwargs.get("include_stop_str_in_output", True),
     )
 
 

@@ -7,10 +7,8 @@ from typing import Optional, List, Dict, Any, Literal
 
 from omegaconf import DictConfig
 
-from roll.agentic.env import REGISTERED_ENV_CONFIGS
 from roll.configs.base_config import BaseConfig
 from roll.configs.worker_config import WorkerConfig
-from roll.pipeline.rlvr.rlvr_config import RLVRConfig
 from roll.utils.logging import get_logger
 
 logger = get_logger()
@@ -34,6 +32,7 @@ class EnvManagerConfig(WorkerConfig):
     group_size: int = field(
         default=1, metadata={"help": "Under the same group, the env config and env seed are ensured to be equal"}
     )
+    group_size_redundancy: int = field(default=0, metadata={"help": "Redundancy num of group size."})
     tags: List[str] = field(default_factory=lambda: ["SimpleSokoban"], metadata={"help": "Environment tags."})
     num_groups_partition: List[int] = field(
         default_factory=lambda: [128],
@@ -59,12 +58,11 @@ class EnvManagerConfig(WorkerConfig):
         根据es config计算world_size
         """
         if self.max_env_num_per_worker <= 0:
-            self.max_env_num_per_worker = self.num_env_groups * self.group_size
+            self.max_env_num_per_worker = self.num_env_groups * self.final_group_size
             logger.warning("all env in one worker by default, you can set max_env_num_per_worker to scale env.")
         logger.info(f"max_env_num_per_worker: {self.max_env_num_per_worker}")
 
-        assert self.num_env_groups * self.group_size % self.max_env_num_per_worker == 0
-        self.world_size = (self.num_env_groups * self.group_size + self.max_env_num_per_worker - 1) // self.max_env_num_per_worker
+        self.world_size = (self.num_env_groups * self.final_group_size + self.max_env_num_per_worker - 1) // self.max_env_num_per_worker
         self.env_configs: Optional[Dict[int, Dict[int, Dict]]] = None
         """
         worker_rank: 
@@ -72,6 +70,9 @@ class EnvManagerConfig(WorkerConfig):
                 env_config
         """
 
+    @property
+    def final_group_size(self):
+        return self.group_size + self.group_size_redundancy
 
 @dataclass
 class AgenticConfig(BaseConfig):
@@ -109,7 +110,7 @@ class AgenticConfig(BaseConfig):
         metadata={"help": "Configuration for the reference role."}
     )
 
-    batch_adjust_mode: Literal["copy", "delete", "auto"] = field(
+    batch_adjust_mode: Literal["copy", "delete", "auto", "random_sample"] = field(
         default="copy", metadata={"help": "batch adjust mode: copy or delete"}
     )
     episode_reward_weight: float = field(default=1.0, metadata={"help": "Episode reward weight, used in GiGPO."})
@@ -123,6 +124,10 @@ class AgenticConfig(BaseConfig):
     lambd: float = field(default=0.95, metadata={"help": "Lambda parameter for advantage calculation"})
     gamma: float = field(default=1, metadata={"help": "Gamma parameter for advantage calculation"})
     pg_clip: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping in PPO policy gradient loss"})
+    use_pg_clip_range: bool = field(default=False, metadata={"help": "Use to change the clipping range of pg_clip"})
+    pg_clip_low: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping lower in PPO policy gradient loss"})
+    pg_clip_high: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping higher in PPO policy gradient loss"})
+    
     value_clip: Optional[float] = field(
         default=None, metadata={"help": "Range for clipping values in loss calculation"}
     )
@@ -147,20 +152,20 @@ class AgenticConfig(BaseConfig):
     whiten_rewards: bool = field(default=False, metadata={"help": "Whiten the rewards before compute advantages."})
     whiten_advantages: bool = field(default=False, metadata={"help": "Whiten the advantage."})
     advantage_clip: float = field(default=None, metadata={"help": "advantage_clip value"})
-    adv_estimator: Literal["gae", "reinforce", "grpo", "gigpo"] = field(
+    adv_estimator: Literal["gae", "reinforce", "grpo", "gigpo", "step_reinforce"] = field(
         default="gae", metadata={"help": "advantage estimator: gae (GAE)."}
     )
-    reward_norm: Literal["batch", "group", "running", None] = field(
+    norm_mean_type: Literal["batch", "group", "running", None] = field(
         default=None,
         metadata={
-            "help": "Reward normalization type: 'batch' (normalize across batch), 'group' (normalize within prompt groups), 'running' (use running statistics)"
+            "help": "Mean type for reward normalization: 'batch' (normalize across batch), 'group' (normalize within prompt groups), 'running' (use running statistics), None (without subtracting mean)"
         },
     )
-    reward_shift: bool = field(
-        default=False, metadata={"help": "Only subtract mean without dividing by std during reward normalization"}
-    )
-    reward_scale: bool = field(
-        default=False, metadata={"help": "Only divide by std without subtracting mean during reward normalization"}
+    norm_std_type: Literal["batch", "group", "running", None] = field(
+        default=None,
+        metadata={
+            "help": "Std type for reward normalization: 'batch' (normalize across batch), 'group' (normalize within prompt groups), 'running' (use running statistics), None (without dividing by std)"
+        },
     )
     add_token_level_kl: bool = field(default=False, metadata={"help": "Add token level kl penalty"})
     critic_warmup: int = field(
@@ -171,7 +176,7 @@ class AgenticConfig(BaseConfig):
     kl_loss_coef: float = field(default=0, metadata={"help": "Loss coefficient for kl loss"})
     entropy_loss_coef: float = field(default=0, metadata={"help": "Loss coefficient for entropy loss"})
     loss_agg_mode: Literal["token-mean", "seq-mean-token-sum", "seq-mean-token-mean", "seq-mean-token-sum-norm"] = (
-        field(default="seq-mean-token-sum", metadata={"help": "Loss aggregation mode"})
+        field(default="seq-mean-token-mean", metadata={"help": "Loss aggregation mode"})
     )
     dual_clip_loss: bool = field(default=False, metadata={"help": "Use dual clip loss"})
 
@@ -255,16 +260,18 @@ class AgenticConfig(BaseConfig):
         max_env_num_per_worker = env_manager_config.max_env_num_per_worker
         for tag, n_group in zip(env_manager_config.tags, env_manager_config.num_groups_partition):
             for env_id in range(
-                done_groups * env_manager_config.group_size, (done_groups + n_group) * env_manager_config.group_size
+                done_groups * env_manager_config.final_group_size, (done_groups + n_group) * env_manager_config.final_group_size
             ):
                 cfg_template = self.custom_envs[tag]
                 env_class = cfg_template.env_type
-                max_tokens_per_step = cfg_template.max_tokens_per_step
 
-                group_id = env_id // env_manager_config.group_size
-                cfg_template.env_config["group_id"] = group_id
-                cfg_template.env_config["group_size"] = env_manager_config.num_env_groups
-                env_config = REGISTERED_ENV_CONFIGS[env_class](**cfg_template.env_config)
+                group_id = env_id // env_manager_config.final_group_size
+
+                if "env_config" not in cfg_template:
+                    cfg_template.env_config = {}
+                # cfg_template.env_config["rank"] = group_id
+                # cfg_template.env_config["world_size"] = env_manager_config.num_env_groups
+                env_config = {**cfg_template.env_config}
 
                 if group_id not in group_seeds:
                     group_seeds[group_id] = random.randint(0, 1000000)
@@ -281,7 +288,7 @@ class AgenticConfig(BaseConfig):
                     "group_seed": group_seeds[group_id],
                 })
                 worker_rank = env_id // max_env_num_per_worker
-                env_configs[worker_rank][env_id] = entry
+                env_configs[worker_rank][env_id] = DictConfig(entry)
             done_groups += n_group
         assert done_groups == env_manager_config.num_env_groups
         env_manager_config.env_configs = env_configs

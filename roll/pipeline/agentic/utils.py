@@ -1,16 +1,19 @@
+import os
 import os.path
+import random
 import shutil
 import subprocess
+from contextlib import contextmanager
 from datetime import datetime
 from multiprocessing import Pool
 from typing import List, Callable, Dict
 
+import imageio
 import numpy as np
 import torch
 from codetiming import Timer
 from torch import Tensor
 
-from roll.agentic.utils import dump_frames_as_gif
 from roll.distributed.scheduler.protocol import DataProto
 from roll.pipeline.agentic.agentic_config import AgenticConfig, RewardNormalizationConfig
 from roll.utils.logging import get_logger
@@ -83,7 +86,7 @@ def compute_discounted_returns(batch: DataProto, adv_estimator, gamma=1.0) -> Da
         DataProto: Updated batch where each trajectory contains an extra tensor key
                    `"step_rewards"` holding the computed discounted returns.
     """
-    if adv_estimator == "gigpo":
+    if adv_estimator in ["gigpo", "step_reinforce" ]:
         batch.batch["sample_order_placeholder"] = torch.arange(batch.batch.batch_size[0], device=batch.batch.device)
         batch_group_by_traj: Dict[str, DataProto] = batch.group_by(keys="traj_id")
         for traj_id,  traj_batch in batch_group_by_traj.items():
@@ -149,8 +152,7 @@ def compute_response_level_rewards(batch: "DataProto", pipeline_config: AgenticC
         # ref: https://github.com/langfengQ/verl-agent/blob/e03bd502667c45172e8c093cc506db8438ae8ab5/gigpo/core_gigpo.py#L109
         # step 1
         episode_scores = torch.from_numpy(batch.non_tensor_batch["episode_scores"].astype(np.float32))
-        scores_with_penalty = episode_scores + batch.batch["penalty"]
-        scores_to_group = DataProto.from_dict({"scores": scores_with_penalty})
+        scores_to_group = DataProto.from_dict({"scores": episode_scores})
         scores_to_group.non_tensor_batch = batch.non_tensor_batch
         episode_rewards: torch.Tensor = grouped_reward_norm(scores_to_group, reward_normalization=pipeline_config.reward_normalization)
 
@@ -167,10 +169,46 @@ def compute_response_level_rewards(batch: "DataProto", pipeline_config: AgenticC
         batch.batch["response_level_rewards"] = pipeline_config.episode_reward_weight * episode_rewards + pipeline_config.step_reward_weight * step_rewards
         batch.batch["episode_rewards_norm"] = episode_rewards
         batch.batch["step_rewards_norm"] = step_rewards
+    elif pipeline_config.adv_estimator == "step_reinforce":
+        scores_to_group = DataProto.from_dict({"scores": batch.batch["step_rewards"]})
+        scores_to_group.non_tensor_batch = batch.non_tensor_batch
+        batch.batch["response_level_rewards"] = grouped_reward_norm(scores_to_group, reward_normalization=pipeline_config.reward_normalization)
     else:
-        scores_with_penalty = batch.batch["scores"].clone().sum(dim=-1) + batch.batch["penalty"]
-        scores_to_group = DataProto.from_dict({"scores": scores_with_penalty})
+        scores_to_group = DataProto.from_dict({"scores": batch.batch["scores"].clone().sum(dim=-1)})
         scores_to_group.non_tensor_batch = batch.non_tensor_batch
         batch.batch["response_level_rewards"] = grouped_reward_norm(scores_to_group, reward_normalization=pipeline_config.reward_normalization)
 
     return batch
+
+
+@contextmanager
+def all_seed(seed):
+    random_state = random.getstate()
+    np_random_state = np.random.get_state()
+
+    try:
+        random.seed(seed)
+        np.random.seed(seed)
+        yield
+    finally:
+        random.setstate(random_state)
+        np.random.set_state(np_random_state)
+
+
+print_only_once = False
+
+
+def dump_frames_as_gif(filename, frames, duration=0.2):
+    global print_only_once
+    try:
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+        with imageio.get_writer(filename, mode="v", duration=duration) as writer:
+            for frame in frames:
+                writer.append_data(frame.astype(np.uint8))
+
+    except Exception as e:
+        if not print_only_once:
+            print(f"Error saving gif: {e}")
+        print_only_once = True
+        pass

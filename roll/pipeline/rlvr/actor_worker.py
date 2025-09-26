@@ -49,9 +49,12 @@ class ActorWorker(BaseActorWorker):
             log_ratio = log_probs - old_log_probs
             masked_log_ratio = masked_mean(log_ratio, final_response_mask, dim=-1)
             ratio = masked_log_ratio.exp().unsqueeze(-1).expand_as(log_ratio)
-           
+        
+        pg_clip_low = self.pipeline_config.pg_clip_low if self.pipeline_config.use_pg_clip_range else self.pipeline_config.pg_clip
+        pg_clip_high = self.pipeline_config.pg_clip_high if self.pipeline_config.use_pg_clip_range else self.pipeline_config.pg_clip  
         surr1 = ratio * advantages
-        surr2 = ratio.clamp(1 - self.pipeline_config.pg_clip, 1 + self.pipeline_config.pg_clip) * advantages
+        surr2 = ratio.clamp(1 - pg_clip_low, 1 + pg_clip_high) * advantages
+
         loss = -torch.min(surr1, surr2)
         if self.pipeline_config.dual_clip_loss:
             dual_clip_loss = -torch.max(-loss, (1 + self.pipeline_config.pg_clip * 2) * advantages)
@@ -62,16 +65,9 @@ class ActorWorker(BaseActorWorker):
         original_pg_loss = agg_loss(loss_mat=loss, loss_mask=final_response_mask,
                                     loss_agg_mode=self.pipeline_config.loss_agg_mode)
 
-        clipped_low = (ratio < 1 - self.pipeline_config.pg_clip).float()
-        clipped_high = (ratio > 1 + self.pipeline_config.pg_clip).float()
+        clipped_low = (ratio < 1 - pg_clip_low).float()
+        clipped_high = (ratio > 1 + pg_clip_high).float()
         clipped = (clipped_low + clipped_high).float()
-
-        entropy = self.strategy.op_compute_entropy(logits=output_tensor, attention_mask=data.batch["response_mask"])
-        entropy_loss = agg_loss(
-            loss_mat=entropy,
-            loss_mask=data.batch["response_mask"][:, 1:],
-            loss_agg_mode=self.pipeline_config.loss_agg_mode,
-        )
 
         if self.pipeline_config.use_kl_loss:
             total_loss = weighted_pg_loss + kl_loss * self.pipeline_config.kl_loss_coef
@@ -81,6 +77,12 @@ class ActorWorker(BaseActorWorker):
         total_loss = total_loss * self.pipeline_config.rl_loss_coef
 
         if self.pipeline_config.entropy_loss_coef > 0:
+            entropy = self.strategy.op_compute_entropy(logits=output_tensor, attention_mask=data.batch["response_mask"])
+            entropy_loss = agg_loss(
+                loss_mat=entropy,
+                loss_mask=data.batch["response_mask"][:, 1:],
+                loss_agg_mode=self.pipeline_config.loss_agg_mode,
+            )
             total_loss = total_loss - entropy_loss * self.pipeline_config.entropy_loss_coef
 
         metrics = {}

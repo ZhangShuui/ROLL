@@ -12,12 +12,12 @@ logger = get_logger()
 @dataclass
 class StrategyArguments:
     strategy_name: Literal[
-        "deepspeed_train", "hf_infer", "deepspeed_infer", "vllm", "sglang", "megatron_infer", "megatron_train"
+        "deepspeed_train", "hf_infer", "deepspeed_infer", "vllm", "sglang", "megatron_infer", "megatron_train", "diffusion_deepspeed_train",
     ] = field(
         default="deepspeed_train",
         metadata={
             "help": "The name of the strategy. Options: 'deepspeed_train', 'hf_infer', 'deepspeed_infer', 'vllm', 'sglang', "
-            "'megatron_infer', 'megatron_train'."
+            "'megatron_infer', 'megatron_train', 'diffusion_deepspeed_train'."
         },
     )
     strategy_config: Optional[Dict] = field(
@@ -34,6 +34,10 @@ class WorkerConfig:
     worker_cls: Optional[str] = field(
         default=None,
         metadata={"help": "The class of the worker."}
+    )
+    pg_variant: Optional[str] = field(
+        default=None,
+        metadata={"help": "The variant of the policy gradient."}
     )
     model_args: ModelArguments = field(
         default_factory=ModelArguments,
@@ -74,6 +78,12 @@ class WorkerConfig:
         default=1,
         metadata={"help": "Frequency of model updates."}
     )
+    model_update_method: Literal["nccl", "rpc"] = field(
+        default="nccl",
+        metadata={
+            "help": "The method of model updates. Options: 'nccl', 'rpc', rpc only for RTP recently."
+        },
+    )
     infer_batch_size: int = field(
         default=16,
         metadata={"help": "Batch size for inference."}
@@ -85,6 +95,18 @@ class WorkerConfig:
     system_envs: dict = field(
         default_factory=dict,
         metadata={"help": "system environment variables for this worker."}
+    )
+    topr_positive_weight: float = field(
+        default=1.0,
+        metadata={"help": "Weight for positive samples in TOPR loss."}
+    )
+    topr_negative_weight: float = field(
+        default=1.0,
+        metadata={"help": "Weight for negative samples in TOPR loss."}
+    )
+    use_remove_padding: bool = field(
+        default=False,
+        metadata={"help": "Remove tail padding token in a micro batch, don't pack sequences(different from verl). must set `variable_seq_lengths` for megatron."}
     )
 
     def __post_init__(self):
