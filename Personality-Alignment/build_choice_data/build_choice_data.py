@@ -3,23 +3,23 @@ change_dataset_5_version.py
 生成符合格式要求的混淆选项，并将原始数据集转换成 ABCD 四选格式。
 7.31version: 错误选项似乎都是一样的，需要进行特殊调整。
 修改版本：支持多种干扰项生成模式，支持指定model/batchsize，支持GPT API模型
+优化版本：基于build_choice_data.py进行架构优化
 """
 
 import os
 import json
 import random
-import torch
+# import torch
 import argparse
 import openai
-import requests  # 添加requests库用于发送HTTP请求
+import requests
 
-# 注释掉Google Gemini的genai导入，改用requests
-# import google.generativeai as genai
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-)
+if False:
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+    )
 from tqdm import tqdm
 import time
 from typing import List, Optional
@@ -28,81 +28,84 @@ import threading
 
 # ========================= 1. Prompt 模板 ========================= #
 
-# 模式1：只给ground_truth，违反句式、话题、内容丰富度
-
 DISTRACTOR_PROMPTS = {
     "style_violation": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a TARGET sentence that a person would say, generate exactly one sentence that violates the style/sentence structure of the target while keeping similar topic. The output should be different in sentence type/structure from the TARGET (e.g., if TARGET is a question, make it a statement; if TARGET is formal, make it informal). Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a TARGET sentence a person would say, generate exactly one sentence that is realistic and close to the TARGET in language, sentence type, and length. Keep the same sentence type as TARGET (e.g., question → question; statement → statement). Make it sound natural, but ensure it is definitely incorrect with respect to the TARGET's intent (e.g., subtly contradict a key detail, flip a polarity, pick a wrong entity, omit a crucial constraint). Do not be too similar to the TARGET (avoid verbatim copying or long phrase reuse). Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "TARGET: {correct_output}"},
     ],
     "topic_violation": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a TARGET sentence that a person would say, generate exactly one sentence that changes the main topic/subject while keeping similar sentence structure. The output sentence should be different from the TARGET. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a TARGET sentence, generate exactly one sentence that keeps the same language and sentence type, stays near the topic, but shifts focus to a closely related yet incorrect entity/attribute/option. Make it realistic and similar in length, clearly wrong for the intended answer while not being too similar to the TARGET. Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "TARGET: {correct_output}"},
     ],
     "richness_violation": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a TARGET sentence that a person would say, generate exactly one sentence that significantly differs in content richness/detail level. If TARGET is detailed, make it very simple; if TARGET is simple, make it overly complex. The output sentence should be different from the TARGET. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a TARGET sentence, generate exactly one sentence with the same language and sentence type. If TARGET is detailed, produce a concise variant that omits a crucial condition so it becomes wrong; if TARGET is brief, produce a more elaborate variant that adds an incorrect detail. Keep it realistic and similar in length range, not too similar verbatim, and clearly incorrect. Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "TARGET: {correct_output}"},
     ],
     "free_violation": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a TARGET sentence that a person would say, generate exactly one sentence that expresses something completely different from the target. IMPORTANT: Your output must express a completely different meaning or intention compared to the TARGET sentence. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a TARGET sentence, generate exactly one sentence that remains close in language, sentence type, and style, but conveys a different, clearly incorrect intention/fact compared with the TARGET. It should be realistic and plausible in context, not too similar verbatim, and still definitely wrong. Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "TARGET: {correct_output}"},
     ],
     "profile_violation_w": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a TARGET sentence and a PROFILE, generate exactly one sentence that obviously violates the personality profile. You are simulating what a PERSON (not an AI model) with completely opposite traits would say. The output should contradict the personality traits, preferences, or characteristics described in the profile. When using pronouns, use first person ('I', 'me', 'my') as if you are that person speaking. IMPORTANT: Your output must strongly contradict the PROFILE and be completely inconsistent with the described personality. Also ensure it differs significantly from the TARGET sentence. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a TARGET sentence and a PROFILE, generate exactly one sentence that is realistic, keeps the same language and sentence type as TARGET, but clearly contradicts the PROFILE (opposite trait/preference/stance). Use first person ('I', 'me', 'my') as if you are that person. Keep it near the TARGET in style and length, avoid verbatim copying, and ensure it is definitely incompatible with the PROFILE. Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "TARGET: {correct_output}\nPROFILE: {profile}"},
     ],
     "conversation_violation_w": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a TARGET sentence and CONVERSATION HISTORY, generate exactly one sentence that is inappropriate or inconsistent with the conversation context. You are simulating what a PERSON (not an AI model) would say if they completely ignored the conversation flow. The output should ignore the conversation flow, context, or previous topics discussed. When using pronouns, use first person ('I', 'me', 'my') as if you are that person speaking. IMPORTANT: Your output must be completely irrelevant to the CONVERSATION context and should disrupt the conversation flow. Also ensure it differs significantly from the TARGET sentence. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a TARGET sentence and CONVERSATION HISTORY, generate exactly one sentence that is realistic and keeps the same language and sentence type as TARGET, but subtly disregards the conversation requirement (e.g., answers a related but different question, ignores a key constraint, wrong perspective/recipient). Keep it near-topic (not random), similar in length, not too similar verbatim, and definitely inappropriate for the conversation. Use first person when natural. Do NOT explain or add quotes; output only the sentence.",
         },
-        {"role": "user", "content": "TARGET: {correct_output}\nCONVERSATION: {conversation}"},
+        {
+            "role": "user",
+            "content": "TARGET: {correct_output}\nCONVERSATION: {conversation}",
+        },
     ],
     "both_violation_w": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a TARGET sentence, PROFILE, and CONVERSATION HISTORY, generate exactly one sentence that violates both the personality profile and conversation context. You are simulating what a PERSON (not an AI model) with completely opposite traits would say while also ignoring the conversation context. The output should contradict the personality traits AND be inappropriate for the conversation context. When using pronouns, use first person ('I', 'me', 'my') as if you are that person speaking. IMPORTANT: Your output must strongly violate BOTH the PROFILE and CONVERSATION context simultaneously, and must be significantly different from the TARGET sentence. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a TARGET sentence, PROFILE, and CONVERSATION HISTORY, generate exactly one sentence that is realistic, keeps the same language and sentence type as TARGET, but clearly violates BOTH the PROFILE and the conversation context. Keep it close in style and length to the TARGET, avoid verbatim copying, and ensure it is definitely wrong for both constraints. Use first person when natural. Do NOT explain or add quotes; output only the sentence.",
         },
-        {"role": "user", "content": "TARGET: {correct_output}\nPROFILE: {profile}\nCONVERSATION: {conversation}"},
+        {
+            "role": "user",
+            "content": "TARGET: {correct_output}\nPROFILE: {profile}\nCONVERSATION: {conversation}",
+        },
     ],
     "profile_violation_w/o": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a PROFILE, generate exactly one sentence that obviously violates the personality profile. You are simulating what a PERSON (not an AI model) with completely opposite traits would say. The output should contradict the personality traits, preferences, or characteristics described in the profile. When using pronouns, use first person ('I', 'me', 'my') as if you are that person speaking. IMPORTANT: Your output must strongly contradict the PROFILE and be completely inconsistent with the described personality. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a PROFILE, generate exactly one realistic sentence that a person would say which clearly contradicts the PROFILE (opposite trait/preference/stance). Keep the output natural, moderate in length, and plausible in everyday context. Use first person ('I', 'me', 'my') as if you are that person. Avoid extreme/off-topic content and avoid meta text. Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "PROFILE: {profile}"},
     ],
     "conversation_violation_w/o": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a CONVERSATION HISTORY, generate exactly one sentence that is inappropriate or inconsistent with the conversation context. You are simulating what a PERSON (not an AI model) would say if they completely ignored the conversation flow. The output should ignore the conversation flow, context, or previous topics discussed. When using pronouns, use first person ('I', 'me', 'my') as if you are that person speaking. IMPORTANT: Your output must be completely irrelevant to the CONVERSATION context and should disrupt the conversation flow. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a CONVERSATION HISTORY, generate exactly one realistic sentence that appears plausible but subtly disregards the conversation flow or a key constraint (e.g., answers a related but different question, wrong recipient, ignores an instruction). Keep it natural, moderate in length, near-topic (not random), and avoid meta text. Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "CONVERSATION: {conversation}"},
     ],
     "both_violation_w/o": [
         {
             "role": "system",
-            "content": "You are a distractor generator for multiple-choice questions. Your task: Given a PROFILE and CONVERSATION HISTORY, generate exactly one sentence that violates both the personality profile and conversation context. You are simulating what a PERSON (not an AI model) with completely opposite traits would say while also ignoring the conversation context. The output should contradict the personality traits AND be inappropriate for the conversation context. When using pronouns, use first person ('I', 'me', 'my') as if you are that person speaking. IMPORTANT: Your output must strongly violate BOTH the PROFILE and CONVERSATION context simultaneously. Do NOT explain, produce only the sentence.",
+            "content": "You are a distractor generator for multiple-choice questions. Given a PROFILE and CONVERSATION HISTORY, generate exactly one realistic sentence that clearly violates BOTH the PROFILE and the conversation context. Keep it natural, moderate in length, near-topic (not random), and avoid meta text or verbatim copying. Use first person when natural. Do NOT explain or add quotes; output only the sentence.",
         },
         {"role": "user", "content": "PROFILE: {profile}\nCONVERSATION: {conversation}"},
     ],
 }
-
 
 # ========================= 2. 配置参数 ========================= #
 
@@ -111,33 +114,45 @@ class Config:
     def __init__(self):
         # 数据路径
         self.data_path = "/project/hdtaccuracy/Personality-Alignment/split_data_v6_filtered/filtered_dataset.jsonl"
-        self.save_path = "/project/hdtaccuracy/Personality-Alignment/choice_ver/raw_choice_data_v6.jsonl"
+        self.save_path = "/project/hdtaccuracy/Personality-Alignment/choice_ver/raw_choice_data_v7_hard.jsonl"
 
-        # 模型配置 - 扩展支持gemini
+        # 模型配置
         self.model_type = "local"  # "local", "gpt", 或 "gemini"
         self.model_path = "/project/hdtaccuracy/models/base/Qwen3-8B"
-        self.gpt_model = "gpt-3.5-turbo"  # or "gpt-4"
-        self.gpt_api_key = None  # 需要设置
-        self.gpt_base_url = None  # 可选，用于自定义API端点
+        self.gpt_model = "gpt-5-mini-2025-08-07"
+        self.gpt_api_key = None
+        self.gpt_base_url = None
 
-        # 新增Gemini配置
-        self.gemini_model = "gemini-1.5-flash"  # 或 "gemini-1.5-pro"
-        self.gemini_api_key = None  # 需要设置Gemini API密钥
+        # Gemini配置
+        self.gemini_model = "gemini-1.5-flash"
+        self.gemini_api_key = None
 
         # 生成配置
-        self.batch_size = 32
+        self.batch_size = 64
         self.max_retries = 3
         self.retry_delay = 1
         self.quantize = False
         self.device_map = "auto"
 
         # 数据配置
-        self.data_limit = None  # None表示处理全部数据
+        self.data_limit = None
 
 
 # ========================= 3. 读取原始数据 ========================= #
 def load_data(config: Config) -> List[dict]:
-    """加载数据"""
+    """加载数据 - 优化内存使用"""
+    # 如果有索引范围限制，只读取需要的部分
+    if hasattr(config, "_start_index") and hasattr(config, "_end_index"):
+        data = []
+        with open(config.data_path, "r", encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i >= config._end_index:
+                    break
+                if i >= config._start_index:
+                    data.append(json.loads(line))
+        return data
+
+    # 原始逻辑保持不变
     data: list[dict] = []
     with open(config.data_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -157,7 +172,7 @@ class ModelWrapper:
         self.config = config
         self.model = None
         self.tokenizer = None
-        self.gemini_model = None  # 添加Gemini模型属性
+        self.gemini_model = None
 
         if config.model_type == "local":
             self._load_local_model()
@@ -169,7 +184,9 @@ class ModelWrapper:
     def _load_local_model(self):
         """加载本地模型"""
         print(f"Loading local model: {self.config.model_path}")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config.model_path, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.config.model_path, trust_remote_code=True
+        )
         self.tokenizer.padding_side = "left"
 
         quant_config = (
@@ -206,11 +223,12 @@ class ModelWrapper:
         if not self.config.gemini_api_key:
             raise ValueError("Gemini API key is required when using Gemini models")
 
-        # 不再使用genai.configure，直接保存配置信息
-        self.gemini_base_url = "https://api.apiplus.org/v1beta/models"
+        self.gemini_base_url = "https://yunwu.zeabur.app/v1beta/models"
         print(f"Using Gemini model: {self.config.gemini_model}")
 
-    def generate_batch(self, prompts: List[str], max_new_tokens: int = 1000) -> List[str]:
+    def generate_batch(
+        self, prompts: List[str], max_new_tokens: int = 100
+    ) -> List[str]:
         """批量生成文本"""
         if self.config.model_type == "local":
             return self._generate_local_batch(prompts, max_new_tokens)
@@ -219,7 +237,9 @@ class ModelWrapper:
         elif self.config.model_type == "gemini":
             return self._generate_gemini_batch(prompts, max_new_tokens)
 
-    def _generate_local_batch(self, prompts: List[str], max_new_tokens: int) -> List[str]:
+    def _generate_local_batch(
+        self, prompts: List[str], max_new_tokens: int
+    ) -> List[str]:
         """使用本地模型批量生成"""
         input_tokens = self.tokenizer(
             prompts,
@@ -233,16 +253,18 @@ class ModelWrapper:
             outputs = self.model.generate(
                 **input_tokens,
                 max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.9,
+                # do_sample=True,
+                # temperature=0.7,
+                # top_p=0.9,
             )
 
         results = []
         for j in range(len(prompts)):
             input_length = len(input_tokens["input_ids"][j])
             generated_tokens = outputs[j][input_length:]
-            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            generated_text = self.tokenizer.decode(
+                generated_tokens, skip_special_tokens=True
+            )
             results.append(clean_generated_text(generated_text))
 
         return results
@@ -252,24 +274,21 @@ class ModelWrapper:
 
         def generate_single_prompt(prompt: str) -> str:
             """生成单个prompt的响应"""
-            client = openai.OpenAI(api_key=self.config.gpt_api_key, base_url=self.config.gpt_base_url)
+            client = openai.OpenAI(
+                api_key=self.config.gpt_api_key, base_url=self.config.gpt_base_url
+            )
 
             for attempt in range(self.config.max_retries):
                 try:
-                    # 将prompt转换为messages格式
-                    # messages = [{"role": "user", "content": prompt}]
-
                     response = client.responses.create(
                         model=self.config.gpt_model,
                         input=prompt,
                         max_output_tokens=max_new_tokens,
                         temperature=0.7,
-                        # top_p=0.9,
                         reasoning={"effort": "low"},
                     )
 
                     generated_text = response.output_text
-                    # print(response)
                     return clean_generated_text(generated_text)
 
                 except Exception as e:
@@ -280,14 +299,15 @@ class ModelWrapper:
                         return f"GPT_API_ERROR_{threading.current_thread().ident}"
 
         # 使用ThreadPoolExecutor进行并发处理
-        max_workers = min(len(prompts), 16)  # 限制最大并发数为10
+        max_workers = min(len(prompts), 16)
         results = [None] * len(prompts)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            future_to_index = {executor.submit(generate_single_prompt, prompt): i for i, prompt in enumerate(prompts)}
+            future_to_index = {
+                executor.submit(generate_single_prompt, prompt): i
+                for i, prompt in enumerate(prompts)
+            }
 
-            # 收集结果
             for future in as_completed(future_to_index):
                 index = future_to_index[future]
                 try:
@@ -299,46 +319,50 @@ class ModelWrapper:
 
         return results
 
-    def _generate_gemini_batch(self, prompts: List[str], max_new_tokens: int) -> List[str]:
+    def _generate_gemini_batch(
+        self, prompts: List[str], max_new_tokens: int
+    ) -> List[str]:
         """使用Gemini API批量生成（多线程模式）"""
 
         def generate_single_prompt(prompt: str) -> str:
             """生成单个prompt的响应"""
             for attempt in range(self.config.max_retries):
                 try:
-                    # 构建请求URL
                     url = f"{self.gemini_base_url}/{self.config.gemini_model}:generateContent"
-
-                    # 构建请求参数
                     params = {"key": self.config.gemini_api_key}
+                    headers = {
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": self.config.gemini_api_key,
+                    }
 
-                    # 构建请求头
-                    headers = {"Content-Type": "application/json", "x-goog-api-key": self.config.gemini_api_key}
-
-                    # 构建请求体
                     data = {
                         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                         "generationConfig": {
                             "temperature": 0.7,
-                            # "topP": 0.9,
                             "maxOutputTokens": max_new_tokens,
-                            "thinkingConfig": {"includeThoughts": False, "thinkingBudget": 0},
+                            "thinkingConfig": {
+                                "includeThoughts": False,
+                                "thinkingBudget": 1500,
+                            },
                         },
                     }
 
-                    # 发送POST请求
                     response = requests.post(
-                        url=url, params=params, headers=headers, json=data, timeout=60  # 设置60秒超时
+                        url=url, params=params, headers=headers, json=data, timeout=60
                     )
 
-                    # 检查响应状态
                     if response.status_code == 200:
                         response_data = response.json()
 
-                        # 解析响应内容
-                        if "candidates" in response_data and len(response_data["candidates"]) > 0:
+                        if (
+                            "candidates" in response_data
+                            and len(response_data["candidates"]) > 0
+                        ):
                             candidate = response_data["candidates"][0]
-                            if "content" in candidate and "parts" in candidate["content"]:
+                            if (
+                                "content" in candidate
+                                and "parts" in candidate["content"]
+                            ):
                                 parts = candidate["content"]["parts"]
                                 if len(parts) > 0 and "text" in parts[0]:
                                     generated_text = parts[0]["text"]
@@ -366,23 +390,28 @@ class ModelWrapper:
                     if attempt < self.config.max_retries - 1:
                         time.sleep(self.config.retry_delay)
                     else:
-                        return f"GEMINI_REQUEST_ERROR_{threading.current_thread().ident}"
+                        return (
+                            f"GEMINI_REQUEST_ERROR_{threading.current_thread().ident}"
+                        )
                 except Exception as e:
                     print(f"Gemini API unexpected error (attempt {attempt + 1}): {e}")
                     if attempt < self.config.max_retries - 1:
                         time.sleep(self.config.retry_delay)
                     else:
-                        return f"GEMINI_UNKNOWN_ERROR_{threading.current_thread().ident}"
+                        return (
+                            f"GEMINI_UNKNOWN_ERROR_{threading.current_thread().ident}"
+                        )
 
         # 使用ThreadPoolExecutor进行并发处理
-        max_workers = min(len(prompts), 8)  # Gemini API限制并发数更低
+        max_workers = min(len(prompts), 8)
         results = [None] * len(prompts)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            future_to_index = {executor.submit(generate_single_prompt, prompt): i for i, prompt in enumerate(prompts)}
+            future_to_index = {
+                executor.submit(generate_single_prompt, prompt): i
+                for i, prompt in enumerate(prompts)
+            }
 
-            # 收集结果
             for future in as_completed(future_to_index):
                 index = future_to_index[future]
                 try:
@@ -395,46 +424,9 @@ class ModelWrapper:
         return results
 
 
-def load_qwen3_8b(
-    model_path: str = "Qwen/Qwen3-8B",
-    device_map: str = "auto",
-    quantize: bool = False,
-):
-    """
-    加载 Qwen3‑8B 模型和分词器 (向后兼容)
-    """
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    tokenizer.padding_side = "left"  # 设置填充方向为左侧
-    quant_config = (
-        BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-        )
-        if quantize
-        else None
-    )
-
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map=device_map,
-        torch_dtype=torch.bfloat16,
-        quantization_config=quant_config,
-        trust_remote_code=True,
-    )
-
-    return model, tokenizer
-
-
 def extract_profile_and_history(prompt: str) -> tuple:
     """
     Extract profile and conversation history from the prompt
-
-    Args:
-        prompt: The full prompt text
-
-    Returns:
-        Tuple of (profile, conversation_history)
     """
     profile = ""
     conversation_history = ""
@@ -446,8 +438,13 @@ def extract_profile_and_history(prompt: str) -> tuple:
         profile = prompt[start:end].strip()
 
     # Extract conversation history
-    if "[Conversation History Begin]" in prompt and "[Conversation History End]" in prompt:
-        start = prompt.find("[Conversation History Begin]") + len("[Conversation History Begin]")
+    if (
+        "[Conversation History Begin]" in prompt
+        and "[Conversation History End]" in prompt
+    ):
+        start = prompt.find("[Conversation History Begin]") + len(
+            "[Conversation History Begin]"
+        )
         end = prompt.find("[Conversation History End]")
         conversation_history = prompt[start:end].strip()
 
@@ -455,32 +452,31 @@ def extract_profile_and_history(prompt: str) -> tuple:
 
 
 def get_max_length(mode: str) -> int:
-    """
-    根据模式返回最大长度
-    """
-    if mode in ["style_violation", "topic_violation", "richness_violation", "free_violation"]:
-        return 512  # 只需要生成一个句子，较短的长度
+    """根据模式返回最大长度"""
+    if mode in [
+        "style_violation",
+        "topic_violation",
+        "richness_violation",
+        "free_violation",
+    ]:
+        return 512
     elif mode in ["profile_violation_w", "profile_violation_w/o"]:
         return 1024
-    elif mode in ["conversation_violation_w", "conversation_violation_w/o", "both_violation_w", "both_violation_w/o"]:
+    elif mode in [
+        "conversation_violation_w",
+        "conversation_violation_w/o",
+        "both_violation_w",
+        "both_violation_w/o",
+    ]:
         return 8192
+    else:
+        return 1024
 
 
-def generate_distractors_by_mode(data_items, mode, model_wrapper: ModelWrapper, batch_size=8):
-    """
-    根据指定模式生成干扰项
-
-    Args:
-        data_items: 数据项列表
-        mode: 生成模式 ('style_violation', 'topic_violation', 'richness_violation', 'free_violation',
-              'profile_violation_w', 'conversation_violation_w', 'both_violation_w',
-              'profile_violation_w/o', 'conversation_violation_w/o', 'both_violation_w/o')
-        model_wrapper: 模型包装器
-        batch_size: 批处理大小
-
-    Returns:
-        生成的干扰项列表
-    """
+def generate_distractors_by_mode(
+    data_items, mode, model_wrapper: ModelWrapper, batch_size=8
+):
+    """根据指定模式生成干扰项"""
     all_distractors = []
 
     # 构造所有输入
@@ -490,17 +486,24 @@ def generate_distractors_by_mode(data_items, mode, model_wrapper: ModelWrapper, 
         profile, conversation = extract_profile_and_history(item["prompt"])
 
         # 根据模式构造prompt
-        if mode in ["style_violation", "topic_violation", "richness_violation", "free_violation"]:
+        if mode in [
+            "style_violation",
+            "topic_violation",
+            "richness_violation",
+            "free_violation",
+        ]:
             messages = [
-                DISTRACTOR_PROMPTS[mode][0],  # system message
+                DISTRACTOR_PROMPTS[mode][0],
                 {
                     "role": "user",
-                    "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(correct_output=correct_output),
+                    "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(
+                        correct_output=correct_output
+                    ),
                 },
             ]
         elif mode == "profile_violation_w":
             messages = [
-                DISTRACTOR_PROMPTS[mode][0],  # system message
+                DISTRACTOR_PROMPTS[mode][0],
                 {
                     "role": "user",
                     "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(
@@ -510,7 +513,7 @@ def generate_distractors_by_mode(data_items, mode, model_wrapper: ModelWrapper, 
             ]
         elif mode == "conversation_violation_w":
             messages = [
-                DISTRACTOR_PROMPTS[mode][0],  # system message
+                DISTRACTOR_PROMPTS[mode][0],
                 {
                     "role": "user",
                     "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(
@@ -520,34 +523,39 @@ def generate_distractors_by_mode(data_items, mode, model_wrapper: ModelWrapper, 
             ]
         elif mode == "both_violation_w":
             messages = [
-                DISTRACTOR_PROMPTS[mode][0],  # system message
+                DISTRACTOR_PROMPTS[mode][0],
                 {
                     "role": "user",
                     "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(
-                        correct_output=correct_output, profile=profile, conversation=conversation
+                        correct_output=correct_output,
+                        profile=profile,
+                        conversation=conversation,
                     ),
                 },
             ]
-        # 新增：不输入 correct output 的版本
         elif mode == "profile_violation_w/o":
             messages = [
-                DISTRACTOR_PROMPTS[mode][0],  # system message
+                DISTRACTOR_PROMPTS[mode][0],
                 {
                     "role": "user",
-                    "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(profile=profile),
+                    "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(
+                        profile=profile
+                    ),
                 },
             ]
         elif mode == "conversation_violation_w/o":
             messages = [
-                DISTRACTOR_PROMPTS[mode][0],  # system message
+                DISTRACTOR_PROMPTS[mode][0],
                 {
                     "role": "user",
-                    "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(conversation=conversation),
+                    "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(
+                        conversation=conversation
+                    ),
                 },
             ]
         elif mode == "both_violation_w/o":
             messages = [
-                DISTRACTOR_PROMPTS[mode][0],  # system message
+                DISTRACTOR_PROMPTS[mode][0],
                 {
                     "role": "user",
                     "content": DISTRACTOR_PROMPTS[mode][1]["content"].format(
@@ -560,26 +568,28 @@ def generate_distractors_by_mode(data_items, mode, model_wrapper: ModelWrapper, 
 
         # 根据模型类型格式化prompt
         if model_wrapper.config.model_type == "local" and model_wrapper.tokenizer:
-            # 使用tokenizer的chat template格式化消息
             prompt_text = model_wrapper.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
             )
         elif model_wrapper.config.model_type == "gemini":
-            # 对于Gemini，格式化为简单的文本格式
             prompt_text = f"{messages[0]['content']}\n\n{messages[1]['content']}"
         else:
-            # 对于GPT，直接使用messages或简单拼接
             prompt_text = f"{messages[0]['content']}\n\n{messages[1]['content']}"
 
         all_inputs.append(prompt_text)
 
     # 分批生成
     generated_distractors = []
-    for i in tqdm(range(0, len(all_inputs), batch_size), desc=f"Generating {mode} distractors"):
+    for i in tqdm(
+        range(0, len(all_inputs), batch_size), desc=f"Generating {mode} distractors"
+    ):
         batch_inputs = all_inputs[i : i + batch_size]
 
         # 使用模型包装器生成
-        batch_outputs = model_wrapper.generate_batch(batch_inputs, max_new_tokens=2048)
+        batch_outputs = model_wrapper.generate_batch(batch_inputs, max_new_tokens=2000)
 
         # 处理每个输出
         for j, generated_text in enumerate(batch_outputs):
@@ -588,8 +598,12 @@ def generate_distractors_by_mode(data_items, mode, model_wrapper: ModelWrapper, 
             if generated_text != correct_output and generated_text.strip():
                 generated_distractors.append(generated_text)
             else:
-                print(f"Warning: Generated distractor failed for mode {mode}: {generated_text}")
-                generated_distractors.append(f"Failed_{mode}_distractor_{len(generated_distractors)}")
+                print(
+                    f"Warning: Generated distractor failed for mode {mode}: {generated_text}"
+                )
+                generated_distractors.append(
+                    f"Failed_{mode}_distractor_{len(generated_distractors)}"
+                )
 
     return generated_distractors
 
@@ -611,19 +625,14 @@ def clean_generated_text(text: str) -> str:
 
 
 def generate_all_distractors_batch(
-    data_items, model_wrapper: ModelWrapper, batch_size=8, start_index=None, end_index=None, modes_to_generate=None
+    data_items,
+    model_wrapper: ModelWrapper,
+    batch_size=8,
+    start_index=None,
+    end_index=None,
+    modes_to_generate=None,
 ):
-    """
-    为每个数据项生成所有10种模式的干扰项
-
-    Args:
-        data_items: 数据项列表
-        model_wrapper: 模型包装器
-        batch_size: 批处理大小
-        start_index: 开始索引 (包含)
-        end_index: 结束索引 (不包含)
-        modes_to_generate: 指定要生成的模式列表，如果为None则生成所有模式
-    """
+    """为每个数据项生成所有10种模式的干扰项 - 优化内存使用"""
     all_modes = [
         "style_violation",
         "topic_violation",
@@ -653,7 +662,9 @@ def generate_all_distractors_batch(
         end_idx = min(len(data_items), end_idx)
 
         if start_idx >= end_idx:
-            raise ValueError(f"Invalid index range: start_index({start_idx}) >= end_index({end_idx})")
+            raise ValueError(
+                f"Invalid index range: start_index({start_idx}) >= end_index({end_idx})"
+            )
 
         data_subset = data_items[start_idx:end_idx]
         print(f"处理数据范围: [{start_idx}:{end_idx}] (共 {len(data_subset)} 条)")
@@ -662,44 +673,38 @@ def generate_all_distractors_batch(
         start_idx = 0
         print(f"处理全部数据: {len(data_subset)} 条")
 
-    # 为每种模式生成干扰项
+    # 为每种模式生成干扰项 - 立即释放内存
     all_mode_distractors = {}
     for mode in modes:
         print(f"\n正在生成 {mode} 模式的干扰项...")
-        mode_distractors = generate_distractors_by_mode(data_subset, mode, model_wrapper, batch_size)
+        mode_distractors = generate_distractors_by_mode(
+            data_subset, mode, model_wrapper, batch_size
+        )
         all_mode_distractors[mode] = mode_distractors
 
     return all_mode_distractors, start_idx
 
 
 def process_original_prompt(prompt: str) -> str:
-    """
-    处理原始提示，提取需要的部分，并重构
-    """
+    """处理原始提示，提取需要的部分，并重构"""
     profile, conversation_history = extract_profile_and_history(prompt)
-    # new_prompt = "You are a helpful assistant.\nNow your task is to choose the most possible output A or B based on the given profile and conversation history.\n"
-    # # 重构提示
     new_prompt = f"[Profile Begin]{profile}[Profile End]\n"
     new_prompt += f"[Conversation History Begin]{conversation_history}[Conversation History End]\n"
-    # new_prompt += "Now please choose the most possible output A, B, C or D\n"
 
     return new_prompt
 
 
 def process_data_batch(
-    data, model_wrapper: ModelWrapper, batch_size=8, start_index=None, end_index=None, modes_to_generate=None
+    data,
+    model_wrapper: ModelWrapper,
+    batch_size=8,
+    start_index=None,
+    end_index=None,
+    modes_to_generate=None,
 ):
-    """
-    批量处理数据:生成干扰项并保存所有模式的结果
+    """批量处理数据:生成干扰项并保存所有模式的结果 - 优化内存使用"""
+    import gc
 
-    Args:
-        data: 原始数据列表
-        model_wrapper: 模型包装器
-        batch_size: 批处理大小
-        start_index: 开始索引 (包含)
-        end_index: 结束索引 (不包含)
-        modes_to_generate: 指定要生成的模式列表
-    """
     # 确定数据范围
     if start_index is not None or end_index is not None:
         start_idx = start_index if start_index is not None else 0
@@ -708,12 +713,19 @@ def process_data_batch(
         end_idx = min(len(data), end_idx)
 
         if start_idx >= end_idx:
-            raise ValueError(f"Invalid index range: start_index({start_idx}) >= end_index({end_idx})")
+            raise ValueError(
+                f"Invalid index range: start_index({start_idx}) >= end_index({end_idx})"
+            )
 
         data_subset = data[start_idx:end_idx]
     else:
         data_subset = data
         start_idx = 0
+
+    # 释放原始数据内存
+    if start_index is not None or end_index is not None:
+        del data
+        gc.collect()
 
     correct_outputs = [item["output"] for item in data_subset]
     qids = [item["qid"] for item in data_subset]
@@ -724,7 +736,7 @@ def process_data_batch(
         model_wrapper,
         batch_size,
         start_index=None,
-        end_index=None,  # 已经切片了，这里不需要再切
+        end_index=None,
         modes_to_generate=modes_to_generate,
     )
 
@@ -738,14 +750,16 @@ def process_data_batch(
             desc="构建新数据集",
         )
     ):
-        prompt_new = f"{process_original_prompt(original_prompt)}\n" "Your choice: /no_think"
+        prompt_new = (
+            f"{process_original_prompt(original_prompt)}\n" "Your choice: /no_think"
+        )
 
         # 构建数据项，包含所有模式的干扰项
         data_item = {
             "qid": qid,
             "prompt": prompt_new,
             "output": correct_output,
-            "original_index": start_idx + i,  # 添加原始索引信息
+            "original_index": start_idx + i,
         }
 
         # 添加所有模式的干扰项
@@ -764,7 +778,9 @@ def process_data_batch(
         # 检查是否有重复的干扰项
         unique_distractors = set(distractors)
         if len(unique_distractors) != len(distractors):
-            print(f"Warning: QID {qid} (index {start_idx + i}) has duplicate distractors")
+            print(
+                f"Warning: QID {qid} (index {start_idx + i}) has duplicate distractors"
+            )
             for j, d in enumerate(distractors):
                 if distractors.count(d) > 1:
                     print(f"  Duplicate: '{d}' appears {distractors.count(d)} times")
@@ -772,24 +788,30 @@ def process_data_batch(
         # 检查干扰项是否与正确答案相同
         for mode, distractor in zip(all_mode_distractors.keys(), distractors):
             if distractor == correct_output:
-                print(f"Warning: QID {qid} (index {start_idx + i}), {mode} distractor is same as correct output")
+                print(
+                    f"Warning: QID {qid} (index {start_idx + i}), {mode} distractor is same as correct output"
+                )
 
         new_data.append(data_item)
+
+    # 释放临时变量内存
+    del all_mode_distractors, data_subset, correct_outputs, qids
+    gc.collect()
 
     return new_data
 
 
 def test_single_mode(data, mode, model_wrapper: ModelWrapper, batch_size=8):
-    """
-    测试单一模式的干扰项生成效果
-    """
+    """测试单一模式的干扰项生成效果"""
     print(f"\n{'='*50}")
     print(f"测试模式: {mode}")
     print(f"{'='*50}")
 
     # 取前10条数据进行测试
     test_data = data[:10]
-    distractors = generate_distractors_by_mode(test_data, mode, model_wrapper, batch_size)
+    distractors = generate_distractors_by_mode(
+        test_data, mode, model_wrapper, batch_size
+    )
 
     for i, (item, distractor) in enumerate(zip(test_data, distractors)):
         print(f"\n--- 样本 {i+1} ---")
@@ -804,28 +826,34 @@ def test_single_mode(data, mode, model_wrapper: ModelWrapper, batch_size=8):
 
 def parse_args():
     """解析命令行参数"""
-    parser = argparse.ArgumentParser(description="生成选择题数据")
+    parser = argparse.ArgumentParser(description="生成Hard级别选择题数据")
 
     # 数据配置
     parser.add_argument(
         "--data_path",
         type=str,
-        default="/project/hdtaccuracy/Personality-Alignment/v8/dialogue_dataset_all_v8_summarized_cleaned.jsonl",
+        default="/home/shurui/shurui/build_choice_data/dialogue_dataset_all_v8_summarized_cleaned.jsonl",
         help="输入数据路径",
     )
     parser.add_argument(
         "--save_path",
         type=str,
-        default="/project/hdtaccuracy/Personality-Alignment/choice_ver/raw_choice_data_v8.jsonl",
+        default="/home/shurui/shurui/build_choice_data/raw_choice_data_v9_hard.jsonl",
         help="输出数据路径",
     )
-    parser.add_argument("--data_limit", type=int, default=None, help="限制处理的数据条数 (用于测试)")
+    parser.add_argument(
+        "--data_limit", type=int, default=None, help="限制处理的数据条数 (用于测试)"
+    )
 
-    # 新增：索引范围配置
-    parser.add_argument("--start_index", type=int, default=None, help="开始处理的索引 (包含)")
-    parser.add_argument("--end_index", type=int, default=None, help="结束处理的索引 (不包含)")
+    # 索引范围配置
+    parser.add_argument(
+        "--start_index", type=int, default=None, help="开始处理的索引 (包含)"
+    )
+    parser.add_argument(
+        "--end_index", type=int, default=None, help="结束处理的索引 (不包含)"
+    )
 
-    # 新增：模式选择配置
+    # 模式选择配置
     parser.add_argument(
         "--modes",
         nargs="+",
@@ -854,36 +882,53 @@ def parse_args():
         help="模型类型: local, gpt 或 gemini",
     )
     parser.add_argument(
-        "--model_path", type=str, default="/project/hdtaccuracy/models/base/Qwen3-8B", help="本地模型路径"
+        "--model_path",
+        type=str,
+        default="/project/hdtaccuracy/models/base/Qwen3-8B",
+        help="本地模型路径",
     )
-    parser.add_argument("--gpt_model", type=str, default="gpt-3.5-turbo", help="GPT模型名称")
+    parser.add_argument(
+        "--gpt_model", type=str, default="gpt-3.5-turbo", help="GPT模型名称"
+    )
     parser.add_argument("--gpt_api_key", type=str, default=None, help="GPT API密钥")
     parser.add_argument("--gpt_base_url", type=str, default=None, help="GPT API基础URL")
 
-    # 新增Gemini配置
+    # Gemini配置
     parser.add_argument(
         "--gemini_model",
         type=str,
         default="gemini-1.5-flash",
         help="Gemini模型名称 (gemini-1.5-flash 或 gemini-1.5-pro)",
     )
-    parser.add_argument("--gemini_api_key", type=str, default=None, help="Gemini API密钥")
+    parser.add_argument(
+        "--gemini_api_key", type=str, default=None, help="Gemini API密钥"
+    )
 
     # 生成配置
-    parser.add_argument("--batch_size", type=int, default=16, help="批处理大小")
+    parser.add_argument("--batch_size", type=int, default=64, help="批处理大小")
     parser.add_argument("--quantize", action="store_true", help="是否使用4bit量化")
     parser.add_argument("--device_map", type=str, default="auto", help="设备映射")
-    parser.add_argument("--max_retries", type=int, default=3, help="API调用最大重试次数")
-    parser.add_argument("--retry_delay", type=float, default=1.0, help="重试延迟时间(秒)")
+    parser.add_argument(
+        "--max_retries", type=int, default=3, help="API调用最大重试次数"
+    )
+    parser.add_argument(
+        "--retry_delay", type=float, default=1.0, help="重试延迟时间(秒)"
+    )
 
     # 测试模式
-    parser.add_argument("--test_mode", action="store_true", help="启用测试模式，只测试各种干扰项生成效果")
+    parser.add_argument(
+        "--test_mode",
+        action="store_true",
+        help="启用测试模式，只测试各种干扰项生成效果",
+    )
 
     return parser.parse_args()
 
 
 def main():
     """主函数"""
+    import gc
+
     args = parse_args()
 
     # 创建配置
@@ -896,7 +941,6 @@ def main():
     config.gpt_model = args.gpt_model
     config.gpt_api_key = args.gpt_api_key
     config.gpt_base_url = args.gpt_base_url
-    # 新增Gemini配置
     config.gemini_model = args.gemini_model
     config.gemini_api_key = args.gemini_api_key
     config.batch_size = args.batch_size
@@ -905,8 +949,14 @@ def main():
     config.max_retries = args.max_retries
     config.retry_delay = args.retry_delay
 
+    # 设置索引范围到config中，用于优化数据加载
+    if args.start_index is not None:
+        config._start_index = args.start_index
+    if args.end_index is not None:
+        config._end_index = args.end_index
+
     print("=" * 60)
-    print("选择题数据生成工具")
+    print("Hard级别选择题数据生成工具")
     print("=" * 60)
     print(f"模型类型: {config.model_type}")
     if config.model_type == "local":
@@ -921,7 +971,7 @@ def main():
     if config.data_limit:
         print(f"数据限制: {config.data_limit}")
 
-    # 新增：显示索引范围和模式信息
+    # 显示索引范围和模式信息
     if args.start_index is not None or args.end_index is not None:
         start_idx = args.start_index if args.start_index is not None else 0
         end_idx = args.end_index if args.end_index is not None else "END"
@@ -933,25 +983,37 @@ def main():
         print("生成所有模式")
     print("=" * 60)
 
+    # 预先验证索引范围（在加载数据前）
+    if args.start_index is not None or args.end_index is not None:
+        # 首先计算原始文件的总行数
+        total_lines = 0
+        with open(config.data_path, "r", encoding="utf-8") as f:
+            for _ in f:
+                total_lines += 1
+
+        start_idx = args.start_index if args.start_index is not None else 0
+        end_idx = args.end_index if args.end_index is not None else total_lines
+
+        if start_idx < 0 or start_idx >= total_lines:
+            raise ValueError(
+                f"start_index ({start_idx}) 超出数据范围 [0, {total_lines})"
+            )
+        if end_idx < 0 or end_idx > total_lines:
+            raise ValueError(f"end_index ({end_idx}) 超出数据范围 [0, {total_lines}]")
+        if start_idx >= end_idx:
+            raise ValueError(
+                f"start_index ({start_idx}) 必须小于 end_index ({end_idx})"
+            )
+
+        actual_count = end_idx - start_idx
+        print(
+            f"验证通过: 原始文件共 {total_lines} 行，将处理 [{start_idx}:{end_idx}] (共 {actual_count} 条)"
+        )
+
     # 加载数据
     print("加载数据...")
     data = load_data(config)
     print(f"加载了 {len(data)} 条数据")
-
-    # 验证索引范围
-    if args.start_index is not None or args.end_index is not None:
-        start_idx = args.start_index if args.start_index is not None else 0
-        end_idx = args.end_index if args.end_index is not None else len(data)
-
-        if start_idx < 0 or start_idx >= len(data):
-            raise ValueError(f"start_index ({start_idx}) 超出数据范围 [0, {len(data)})")
-        if end_idx < 0 or end_idx > len(data):
-            raise ValueError(f"end_index ({end_idx}) 超出数据范围 [0, {len(data)}]")
-        if start_idx >= end_idx:
-            raise ValueError(f"start_index ({start_idx}) 必须小于 end_index ({end_idx})")
-
-        actual_count = end_idx - start_idx
-        print(f"实际处理范围: [{start_idx}:{end_idx}] (共 {actual_count} 条)")
 
     # 初始化模型
     print("初始化模型...")
@@ -974,31 +1036,19 @@ def main():
         )
 
         # 在测试模式中也支持索引范围
-        test_data = data
-        if args.start_index is not None or args.end_index is not None:
-            start_idx = args.start_index if args.start_index is not None else 0
-            end_idx = args.end_index if args.end_index is not None else len(data)
-            test_data = data[start_idx : min(end_idx, start_idx + 10)]  # 测试模式最多10条
-        else:
-            test_data = data[:10]
+        test_data = data[:10]  # 测试模式下只取前10条已加载的数据
 
         for mode in test_modes:
             test_single_mode(test_data, mode, model_wrapper, config.batch_size)
     else:
         # 正式处理数据
-        actual_data_count = len(data)
-        if args.start_index is not None or args.end_index is not None:
-            start_idx = args.start_index if args.start_index is not None else 0
-            end_idx = args.end_index if args.end_index is not None else len(data)
-            actual_data_count = end_idx - start_idx
-
-        print(f"\n开始处理 {actual_data_count} 条数据...")
+        print(f"\n开始处理 {len(data)} 条数据...")
         new_data = process_data_batch(
             data,
             model_wrapper,
             batch_size=config.batch_size,
-            start_index=args.start_index,
-            end_index=args.end_index,
+            start_index=None,  # 数据已经是指定范围，不需要再次切片
+            end_index=None,
             modes_to_generate=args.modes,
         )
 
@@ -1012,15 +1062,23 @@ def main():
 
         if args.start_index is not None or args.end_index is not None:
             start_idx = args.start_index if args.start_index is not None else 0
-            end_idx = args.end_index if args.end_index is not None else len(data)
+            end_idx = args.end_index if args.end_index is not None else "END"
 
             # 在文件名中插入范围信息
-            base_name, ext = save_path.rsplit(".", 1) if "." in save_path else (save_path, "jsonl")
+            base_name, ext = (
+                save_path.rsplit(".", 1) if "." in save_path else (save_path, "jsonl")
+            )
             save_path = f"{base_name}_range_{start_idx}_{end_idx}.{ext}"
+
+        # 释放data内存
+        del data
+        gc.collect()
 
         if args.modes:
             # 在文件名中加入模式信息
-            base_name, ext = save_path.rsplit(".", 1) if "." in save_path else (save_path, "jsonl")
+            base_name, ext = (
+                save_path.rsplit(".", 1) if "." in save_path else (save_path, "jsonl")
+            )
             modes_str = "_".join(args.modes)
             save_path = f"{base_name}_modes_{modes_str}.{ext}"
 

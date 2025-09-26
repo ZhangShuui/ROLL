@@ -20,6 +20,5 @@ srun --export=ALL \
     --container-writable \
     bash -c "
 cd /home/szhangfa/ROLL/Personality-Alignment
-python build_choice_data.py
-python answer_choice_multi_type.py
+python build_choice_data.py --start_index 100 --end_index 200 --save_path /project/hdtaccuracy/Personality-Alignment/choice_ver/v8/raw_choice_data_v8_sep.jsonl
 "

@@ -5,3 +5,4 @@ from roll.pipeline.rlvr.rewards.ifeval_rule_reward_worker import GeneralRuleRewa
 from roll.pipeline.rlvr.rewards.llm_judge_reward_worker import LLMJudgeRewardWorker
 from roll.pipeline.rlvr.rewards.math_rule_reward_worker import MathRuleRewardWorker
 from roll.pipeline.rlvr.rewards.peralign_llm_judge_reward_worker import PerAlignLLMJudgeRewardWorker
+from roll.pipeline.rlvr.rewards.peralign_choice_reward_worker import PerAlignChoiceRewardWorker

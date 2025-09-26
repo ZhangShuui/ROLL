@@ -172,3 +172,5 @@ output/
 wandb
 *.json
 slurm-*
+*.err
+*.png

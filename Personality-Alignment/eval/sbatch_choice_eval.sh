@@ -22,9 +22,9 @@ srun --export=ALL \
     bash -c "
 cd /home/szhangfa/ROLL/Personality-Alignment/eval
 python choice_eval.py \
-    --base_model /project/hdtaccuracy/models/base/Qwen3-8B \
-    --lora_dir /project/hdtaccuracy/trains/choice-sft/qwen3-8b-lora-sft-hard \
-    --dataset /project/hdtaccuracy/Personality-Alignment/choice_ver/four_choices_question_v7_hard/v7_hard_test.json \
+    --base_model /project/hdtaccuracy/models/base/Qwen3-4B \
+    --lora_dir /project/hdtaccuracy/trains/choice-sft/qwen3-4b-lora-sft-hard-plus\
+    --dataset /project/hdtaccuracy/Personality-Alignment/choice_ver/four_choices_question_v7_hard_final/v7_hard_test.json \
     --batch_size 16 \
-    --save_dir /home/szhangfa/ROLL/Personality-Alignment/eval/choice_eval_outputs_hard
+    --save_dir /home/szhangfa/ROLL/Personality-Alignment/eval/qwen3_4b_outputs_hard_final
 "

@@ -299,22 +299,22 @@ def analyze_length_distribution(records, base_dir, output_dir="analysis_results"
 
 if __name__ == "__main__":
     # 分析原始数据
-    base_dir = "/project/hdtaccuracy/Personality-Alignment/"
-    input_file = base_dir + "dialogue_dataset_all_v5_summarized.jsonl"  # 输入文件
+    base_dir = "/project/hdtaccuracy/Personality-Alignment/v8/"
+    input_file = base_dir + "dialogue_dataset_all_v8_summarized_cleaned.jsonl"  # 输入文件
     print("正在分析原始数据集...")
     records = load_dataset(input_file)
     analyze_length_distribution(records, "original_data_analysis")
 
     # 如果存在划分后的数据，也进行分析
-    split_dir = Path(base_dir) / "split_data_v5"
-    if split_dir.exists():
-        for split_file in [
-            "train_random.jsonl",
-            "test_random.jsonl",
-            "train_user_based.jsonl",
-            "test_user_based.jsonl",
-        ]:
-            if (split_dir / split_file).exists():
-                print(f"\n正在分析 {split_file}...")
-                split_records = load_dataset(split_dir / split_file)
-                analyze_length_distribution(split_records, base_dir, f"analysis_{split_file.replace('.jsonl', '')}")
+    # split_dir = Path(base_dir) / "split_data"
+    # if split_dir.exists():
+    #     for split_file in [
+    #         "train_random.jsonl",
+    #         "test_random.jsonl",
+    #         "train_user_based.jsonl",
+    #         "test_user_based.jsonl",
+    #     ]:
+    #         if (split_dir / split_file).exists():
+    #             print(f"\n正在分析 {split_file}...")
+    #             split_records = load_dataset(split_dir / split_file)
+    #             analyze_length_distribution(split_records, base_dir, f"analysis_{split_file.replace('.jsonl', '')}")

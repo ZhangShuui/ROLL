@@ -10,45 +10,73 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
 
-def normalize_choice(text: str):
-    """Normalize any text to single letter A/B/C/D if possible."""
-    if not text:
+def normalize_choice(response: str):
+    # """Normalize any text to single letter A/B/C/D if possible."""
+    # if not text:
+    #     return None
+    # # 原文大小写保留用于后续可能的展示，这里统一转大写做匹配
+    # t = (text or "").strip()
+    # t_up = t.upper()
+
+    # # 清理常见噪声/标签
+    # # 去掉 <think>...</think> 以及其它尖括号标签
+    # t_up = re.sub(r"<THINK>.*?</THINK>", " ", t_up, flags=re.DOTALL)
+    # t_up = re.sub(r"<[^>]+>", " ", t_up)
+    # # 去掉常见 role 标记
+    # t_up = re.sub(r"\b(ASSISTANT|SYSTEM|USER)\b", " ", t_up)
+
+    # # 1) 优先匹配“结尾的单个 A-D”
+    # m = re.search(r"([ABCD])\s*$", t_up)
+    # if m:
+    #     return m.group(1)
+
+    # # 2) 常见显式前缀 Answer/Option/Choice
+    # m = re.search(r'(?:^|\s)(?:ANSWER|OPTION|CHOICE)\s*[:\-]?\s*["\'`(]*\b([ABCD])\b', t_up)
+    # if m:
+    #     return m.group(1)
+
+    # # 3) 文首的单个字母
+    # m = re.match(r'^\s*["\'`(]*([ABCD])(?:[\).\s]|$)', t_up)
+    # if m:
+    #     return m.group(1)
+
+    # # 4) 任意位置的独立字母
+    # m = re.search(r"\b([ABCD])\b", t_up)
+    # if m:
+    #     return m.group(1)
+
+    # # 5) 仅出现唯一一个 A-D 时
+    # letters = re.findall(r"[ABCD]", t_up)
+    # if len(letters) == 1:
+    #     return letters[0]
+
+    # return None
+    """Extract choice letter from model response following prompt format requirements"""
+    if not response:
         return None
-    # 原文大小写保留用于后续可能的展示，这里统一转大写做匹配
-    t = (text or "").strip()
-    t_up = t.upper()
 
-    # 清理常见噪声/标签
-    # 去掉 <think>...</think> 以及其它尖括号标签
-    t_up = re.sub(r"<THINK>.*?</THINK>", " ", t_up, flags=re.DOTALL)
-    t_up = re.sub(r"<[^>]+>", " ", t_up)
-    # 去掉常见 role 标记
-    t_up = re.sub(r"\b(ASSISTANT|SYSTEM|USER)\b", " ", t_up)
+    response = response.strip()
 
-    # 1) 优先匹配“结尾的单个 A-D”
-    m = re.search(r"([ABCD])\s*$", t_up)
-    if m:
-        return m.group(1)
+    # 1. 首先查找 /choice{letter} 格式（严格按照prompt要求）
+    choice_pattern = r"/choice\s*([A-G])"
+    match = re.search(choice_pattern, response, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
 
-    # 2) 常见显式前缀 Answer/Option/Choice
-    m = re.search(r'(?:^|\s)(?:ANSWER|OPTION|CHOICE)\s*[:\-]?\s*["\'`(]*\b([ABCD])\b', t_up)
-    if m:
-        return m.group(1)
+    # 2. 查找其他可能的格式变体
+    patterns = [
+        r"choice([A-G])",  # choiceA 或 choice A
+        r"choice\s*[:\-]?\s*([A-G])",  # choice: A 或 choice A
+        r"answer\s*[:\-]?\s*([A-G])",  # answer: A 或 answer A
+        r"option\s*[:\-]?\s*([A-G])",  # option: A 或 option A
+        r"^([A-G])[.\s]",  # 开头的单个字母
+        r"\b([A-G])\b",  # 任何单独的字母
+    ]
 
-    # 3) 文首的单个字母
-    m = re.match(r'^\s*["\'`(]*([ABCD])(?:[\).\s]|$)', t_up)
-    if m:
-        return m.group(1)
-
-    # 4) 任意位置的独立字母
-    m = re.search(r"\b([ABCD])\b", t_up)
-    if m:
-        return m.group(1)
-
-    # 5) 仅出现唯一一个 A-D 时
-    letters = re.findall(r"[ABCD]", t_up)
-    if len(letters) == 1:
-        return letters[0]
+    for pattern in patterns:
+        match = re.search(pattern, response, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
 
     return None
 
@@ -64,7 +92,7 @@ def load_model_and_tokenizer(base_model_path: str, lora_path: str):
         base_model_path,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
-        device_map="auto",
+        device_map={"": 0},
     )
     # 修复 base 情况：不加载 LoRA
     if lora_path and lora_path != "base":
@@ -80,8 +108,17 @@ def load_test_dataset(dataset_path: str):
     - messages: list of {role, content}
     - output: expected answer (ideally 'A'/'B'/'C'/'D')
     """
-    with open(dataset_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    if dataset_path.endswith(".jsonl"):
+        data = []
+        with open(dataset_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    item = json.loads(line)
+                    data.append(item)
+        return data
+    elif dataset_path.endswith(".json"):
+        with open(dataset_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
     return data
 
 
@@ -91,7 +128,7 @@ def build_prompts_from_messages(tokenizer, messages_batch):
     for messages in messages_batch:
         prompt = tokenizer.apply_chat_template(
             messages,
-            max_length=8192,
+            max_length=4000,
             tokenize=False,
             add_generation_prompt=True,
             enable_thinking=False,
@@ -101,7 +138,7 @@ def build_prompts_from_messages(tokenizer, messages_batch):
 
 
 @torch.inference_mode()
-def generate_response_batch(model, tokenizer, messages_list, max_new_tokens=6, batch_size=32):
+def generate_response_batch(model, tokenizer, messages_list, max_new_tokens=200, batch_size=32):
     """Batch generate and robustly strip prompt prefix from decoded outputs."""
     all_responses = []
 
@@ -115,39 +152,49 @@ def generate_response_batch(model, tokenizer, messages_list, max_new_tokens=6, b
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=8192,
+            max_length=4000,
         ).to(model.device)
 
         outputs = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
-            do_sample=False,
-            temperature=0.0,
+            do_sample=True,
+            temperature=0.01,
             pad_token_id=tokenizer.eos_token_id,
-            return_dict_in_generate=True,
+            # return_dict_in_generate=True,
         )
 
-        sequences = outputs.sequences  # [B, T_in + T_new]
-        attn = inputs["attention_mask"]  # [B, T_in]
+        # sequences = outputs.sequences  # [B, T_in + T_new]
+        # attn = inputs["attention_mask"]  # [B, T_in]
 
-        for j in range(sequences.size(0)):
-            # 方案A：用“解码后的输入前缀”精确剥离（最稳）
-            full_dec = tokenizer.decode(sequences[j], skip_special_tokens=True)
-            inp_dec = tokenizer.decode(inputs["input_ids"][j], skip_special_tokens=True)
+        # for j in range(sequences.size(0)):
+        #     # 方案A：用“解码后的输入前缀”精确剥离（最稳）
+        #     full_dec = tokenizer.decode(sequences[j], skip_special_tokens=True)
+        #     inp_dec = tokenizer.decode(inputs["input_ids"][j], skip_special_tokens=True)
 
-            if full_dec.startswith(inp_dec):
-                gen_text = full_dec[len(inp_dec) :].strip()
-            else:
-                # 方案B：回退到 attention_mask 切分
-                in_len = int(attn[j].sum().item())
-                gen_text = tokenizer.decode(sequences[j, in_len:], skip_special_tokens=True).strip()
+        #     if full_dec.startswith(inp_dec):
+        #         gen_text = full_dec[len(inp_dec) :].strip()
+        #     else:
+        #         # 方案B：回退到 attention_mask 切分
+        #         in_len = int(attn[j].sum().item())
+        #         gen_text = tokenizer.decode(sequences[j, in_len:], skip_special_tokens=True).strip()
 
-            all_responses.append(gen_text)
+        #     all_responses.append(gen_text)
+        for j in range(len(prompts)):
+            input_length = len(inputs["input_ids"][j])
+            generated_tokens = outputs[j][input_length:]
+            generated_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            all_responses.append(generated_text.strip())
+            # if j == 0:
+            #     # Debug 输出首个样本的对比
+            #     # print("Prompt:", prompts[j])
+            #     # print("Generated:", generated_text.strip())
+            #     print("-" * 40)
 
     return all_responses
 
 
-def evaluate_one_checkpoint(model, tokenizer, test_data, batch_size=32, max_new_tokens=6, sample=None):
+def evaluate_one_checkpoint(model, tokenizer, test_data, batch_size=32, max_new_tokens=200, sample=None):
     """Evaluate one model+tokenizer on provided dataset with detailed statistics."""
     # Optional sampling
     data = test_data
@@ -213,7 +260,7 @@ def evaluate_one_checkpoint(model, tokenizer, test_data, batch_size=32, max_new_
 
     # Per-class accuracy (only where gold exists)
     per_class = {}
-    for c in ["A", "B", "C", "D"]:
+    for c in ["A", "B", "C", "D", "E", "F", "G"]:
         g = gold_counter.get(c, 0)
         if g > 0:
             per_class[c] = {
@@ -247,7 +294,7 @@ def list_lora_checkpoints(lora_dir: str):
     paths = []
     if os.path.isdir(lora_dir):
         # include root dir first
-        paths.append(lora_dir)
+        # paths.append(lora_dir)
         # add checkpoint-* subdirs
         subs = [
             os.path.join(lora_dir, d)
@@ -259,6 +306,9 @@ def list_lora_checkpoints(lora_dir: str):
             key=lambda p: int(os.path.basename(p).split("-")[-1]) if "-" in os.path.basename(p) else 0,
         )
         paths.extend(subs)
+        if not paths:
+            # no checkpoint-* found, include root if valid
+            paths.append(lora_dir)
     else:
         # single path
         paths.append(lora_dir)
@@ -285,19 +335,19 @@ def save_results(save_dir, lora_path, summary, detailed):
 
 def parse_args():
     ap = argparse.ArgumentParser(description="Robust multi-choice evaluation (LoRA checkpoints supported).")
-    ap.add_argument("--base_model", default="/project/hdtaccuracy/models/base/Qwen3-8B", help="Base HF model path")
+    ap.add_argument("--base_model", default="/project/hdtaccuracy/models/base/Qwen3-4B", help="Base HF model path")
     ap.add_argument(
         "--lora_dir",
-        default="/project/hdtaccuracy/trains/choice-sft/qwen3-8b-lora-sft",
+        default="/project/hdtaccuracy/trains/choice-sft/qwen3-4b-lora-sft-hard-plus",
         help="LoRA adapter path or directory containing checkpoints",
     )
     ap.add_argument(
         "--dataset",
-        default="/project/hdtaccuracy/Personality-Alignment/choice_ver/four_choices_question_v7/v7_test.json",
+        default="/project/hdtaccuracy/Personality-Alignment/choice_ver/v9/train_data_ram/training_data_nothink_test.jsonl",
         help="Test dataset JSON path",
     )
     ap.add_argument("--batch_size", type=int, default=32)
-    ap.add_argument("--max_new_tokens", type=int, default=2)
+    ap.add_argument("--max_new_tokens", type=int, default=200)
     ap.add_argument("--sample", type=int, default=None, help="Only evaluate the first N samples")
     ap.add_argument("--save_dir", default="choice_eval_outputs", help="Directory to save detailed JSON results")
     return ap.parse_args()

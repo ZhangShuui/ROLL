@@ -302,8 +302,8 @@ def split_dataset(base_dir, input_file: str, output_dir: str = ".", test_ratio: 
 
 if __name__ == "__main__":
     # 使用示例
-    base_dir = "/project/hdtaccuracy/Personality-Alignment/"
-    input_file = "dialogue_dataset_all_v6_cleaned.jsonl"  # 输入文件
-    output_dir = "split_data_v6_roll"  # 输出目录
+    base_dir = "/project/hdtaccuracy/Personality-Alignment/choice_ver/v9/train_data_ram"
+    input_file = "training_data_nothink.jsonl"  # 输入文件
+    output_dir = "split_data_v9_roll"  # 输出目录
 
-    split_dataset(base_dir, input_file, output_dir, test_ratio=0.2, seed=42)
+    split_dataset(base_dir, input_file, output_dir, test_ratio=0.3, seed=42)

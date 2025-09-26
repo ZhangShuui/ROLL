@@ -1,0 +1,135 @@
+#!/bin/bash
+#SBATCH --job-name=gemini_choice_data
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --exclude=dgx-34
+#SBATCH --time=10:00:00
+#SBATCH --account=hdtaccuracy
+#SBATCH --partition=cpu
+
+cd /home/szhangfa/ROLL/Personality-Alignment
+# Set script directory and paths
+SCRIPT_DIR="/home/szhangfa/ROLL/Personality-Alignment"
+DATA_PATH="/project/hdtaccuracy/Personality-Alignment/split_data_v6_filtered/filtered_dataset.jsonl"
+SAVE_PATH="/project/hdtaccuracy/Personality-Alignment/choice_ver/raw_choice_data_v6_gemini.jsonl"
+
+# Gemini API configuration
+GEMINI_API_KEY="sk-ejiZhvl2oKmLW3GtXv5Uv8G1KyZN4gsWeFHt26g22w4Ty4A2"  # Replace with your actual API key
+GEMINI_MODEL="gemini-2.5-flash" 
+# Processing configuration
+BATCH_SIZE=16  # Smaller batch size for Gemini API calls
+DATA_LIMIT=""  # Set to limit data for testing, empty for all data
+MAX_RETRIES=5
+RETRY_DELAY=2.0
+
+# Check if API key is set
+if [ "$GEMINI_API_KEY" = "your_gemini_api_key_here" ]; then
+    echo "Error: Please set your Gemini API key in the script"
+    echo "Edit the GEMINI_API_KEY variable in this script"
+    echo "You can get your API key from: https://aistudio.google.com/app/apikey"
+    exit 1
+fi
+
+# Create output directory if it doesn't exist
+OUTPUT_DIR=$(dirname "$SAVE_PATH")
+mkdir -p "$OUTPUT_DIR"
+
+# Log file
+LOG_FILE="${OUTPUT_DIR}/gemini_generation_$(date +%Y%m%d_%H%M%S).log"
+
+echo "=========================================="
+echo "Gemini Choice Data Generation Script"
+echo "=========================================="
+echo "Data Path: $DATA_PATH"
+echo "Save Path: $SAVE_PATH"
+echo "Gemini Model: $GEMINI_MODEL"
+echo "Batch Size: $BATCH_SIZE"
+echo "Max Retries: $MAX_RETRIES"
+echo "Log File: $LOG_FILE"
+echo "=========================================="
+
+# Build command
+CMD="/home/szhangfa/.conda/envs/local/bin/python $SCRIPT_DIR/build_choice_data.py \
+    --model_type gemini \
+    --gemini_model $GEMINI_MODEL \
+    --gemini_api_key $GEMINI_API_KEY \
+    --batch_size $BATCH_SIZE \
+    --max_retries $MAX_RETRIES \
+    --retry_delay $RETRY_DELAY \
+    --data_path $DATA_PATH \
+    --save_path $SAVE_PATH"
+
+# Add optional parameters
+if [ -n "$DATA_LIMIT" ]; then
+    CMD="$CMD --data_limit $DATA_LIMIT"
+fi
+
+# Execute command with logging
+echo "Starting Gemini data generation..."
+echo "Command: $CMD"
+echo ""
+
+# Run the command and capture both stdout and stderr
+{
+    echo "=== Gemini Choice Data Generation Started at $(date) ==="
+    echo "Command: $CMD"
+    echo ""
+    
+    eval $CMD
+    
+    echo ""
+    echo "=== Gemini Choice Data Generation Completed at $(date) ==="
+} 2>&1 | tee "$LOG_FILE"
+
+# Check if the process was successful
+if [ ${PIPESTATUS[0]} -eq 0 ]; then
+    echo ""
+    echo "=========================================="
+    echo "SUCCESS: Gemini data generation completed!"
+    echo "Output file: $SAVE_PATH"
+    echo "Log file: $LOG_FILE"
+    echo "=========================================="
+    
+    # Display file size and line count if output exists
+    if [ -f "$SAVE_PATH" ]; then
+        LINES=$(wc -l < "$SAVE_PATH")
+        SIZE=$(du -h "$SAVE_PATH" | cut -f1)
+        echo "Generated $LINES data entries"
+        echo "Output file size: $SIZE"
+    fi
+else
+    echo ""
+    echo "=========================================="
+    echo "ERROR: Gemini data generation failed!"
+    echo "Check the log file for details: $LOG_FILE"
+    echo "=========================================="
+    exit 1
+fi
+
+# Optional: Test mode
+if [ "$1" = "--test" ]; then
+    echo ""
+    echo "Running in test mode..."
+    TEST_CMD="/home/szhangfa/.conda/envs/local/bin/python $SCRIPT_DIR/build_choice_data.py \
+        --model_type gemini \
+        --gemini_model $GEMINI_MODEL \
+        --gemini_api_key $GEMINI_API_KEY \
+        --batch_size 2 \
+        --data_path $DATA_PATH \
+        --data_limit 10 \
+        --test_mode"
+    
+    echo "Test command: $TEST_CMD"
+    eval $TEST_CMD
+fi
+
+# Performance recommendations
+echo ""
+echo "=========================================="
+echo "Performance Notes:"
+echo "- gemini-1.5-flash: Faster, more cost-effective"
+echo "- gemini-1.5-pro: Higher quality, slower, more expensive"
+echo "- Recommended batch_size: 4-8 for flash, 2-4 for pro"
+echo "- Get API key from: https://aistudio.google.com/app/apikey"
+echo "=========================================="
