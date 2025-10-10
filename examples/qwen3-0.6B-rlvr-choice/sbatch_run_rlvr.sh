@@ -3,10 +3,10 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=8
 #SBATCH --ntasks-per-node=1
-#SBATCH --exclude=dgx-34,dgx-20
+#SBATCH --exclude=dgx-34
 #SBATCH --time=30:00:00
 #SBATCH --account=hdtaccuracy
-#SBATCH --partition=preempt
+#SBATCH --partition=normal
 ##SBATCH --container-writable
 ##SBATCH --container-image /home/szhangfa/containers/roll.img
 ##SBATCH --container-save /home/szhangfa/containers/roll.img
@@ -27,7 +27,25 @@ srun --export=WANDB_API_KEY,MASTER_ADDR,MASTER_PORT \
     bash -c "
 set -euo pipefail
 
-cd /home/szhangfa/ROLL
+# === 容器内启动 GPU 显存监控 ===
+GPU_LOG_INTERVAL=\"\${GPU_LOG_INTERVAL:-5}\"
+LOG_DIR=\"/home/szhangfa/ROLL/logs/gpu\"
+mkdir -p \"\$LOG_DIR\"
 
-bash examples/qwen3-4B-rlvr-choice/run_rlvr_pipeline.sh
+HOST=\"\$(hostname)\"
+JOBID=\"\${SLURM_JOB_ID:-manual}\"
+TS=\"\$(date +%Y%m%d_%H%M%S)\"
+GPU_LOG=\"\$LOG_DIR/gpu_\${HOST}_\${JOBID}_\${TS}.csv\"
+
+# 只记录显存使用/总量（每 \${GPU_LOG_INTERVAL}s）
+nvidia-smi --query-gpu=timestamp,index,uuid,name,memory.used,memory.total \
+  --format=csv -l \"\$GPU_LOG_INTERVAL\" >> \"\$GPU_LOG\" &
+GPU_MON_PID=\$!
+
+trap 'kill \$GPU_MON_PID 2>/dev/null || true' EXIT INT TERM
+# =================================
+
+cd /home/szhangfa/ROLL
+python3 -m pip install -r requirements_torch260_vllm.txt
+bash examples/qwen3-0.6B-rlvr-choice/run_rlvr_pipeline.sh
 "

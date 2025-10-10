@@ -42,9 +42,9 @@ logger = get_logger()
 def is_lora_training(pipeline_config: RLVRConfig) -> bool:
     if pipeline_config.actor_train.model_args.lora_target is None:
         return False
-    assert pipeline_config.actor_train.strategy_args.strategy_name == "deepspeed_train", (
-        "LoRA only supports deepspeed_train"
-    )
+    assert (
+        pipeline_config.actor_train.strategy_args.strategy_name == "deepspeed_train"
+    ), "LoRA only supports deepspeed_train"
     return True
 
 
@@ -63,6 +63,8 @@ def preprocess_dataset(dataset, prompt_len, encode_function, data_args):
         num_proc=data_args.preprocessing_num_workers,
         desc="Filtering dataset",
     )
+    if data_args.max_samples and len(dataset) > data_args.max_samples:
+        dataset = dataset.select(range(data_args.max_samples))
     logger.info(f"Filtering prompt len: {dataset}")
     logger.info(f"Encoding: {dataset}")
     return dataset
@@ -86,11 +88,13 @@ def get_encode_function(template_name, data_args, tokenizer):
 
     return encode_function
 
+
 def update_dataset_domain(tag_2_domain: Dict[str, set[str]], row):
-    if 'domain' in row and row['domain'] is not None:
+    if "domain" in row and row["domain"] is not None:
         return row
     row["domain"] = tag_2_domain.get(row["tag"], "math_rule")
     return row
+
 
 def query_filter_fn(data_list: List[DataProto], config: RLVRConfig) -> bool:
     """
@@ -127,10 +131,8 @@ class RLVRPipeline(BasePipeline):
 
         self.tokenizer = default_tokenizer_provider(model_args=self.pipeline_config.actor_train.model_args)
 
-
-        logger.info(f'Use training dataset type: {self.pipeline_config.actor_train.data_args.dataset_type}')
+        logger.info(f"Use training dataset type: {self.pipeline_config.actor_train.data_args.dataset_type}")
         dataset = get_dataset(data_args=self.pipeline_config.actor_train.data_args)
-
 
         self.val_dataset = None
         if self.pipeline_config.validation.data_args.file_name:
@@ -142,7 +144,9 @@ class RLVRPipeline(BasePipeline):
             if self.pipeline_config.global_template
             else self.pipeline_config.actor_train.data_args.template
         )
-        encode_function = get_encode_function(template_name, self.pipeline_config.actor_train.data_args, self.tokenizer)
+        encode_function = get_encode_function(
+            template_name, self.pipeline_config.actor_train.data_args, self.tokenizer
+        )
 
         dataset = preprocess_dataset(
             dataset,
@@ -155,7 +159,7 @@ class RLVRPipeline(BasePipeline):
             partial(update_dataset_domain, self.pipeline_config.tag_2_domain),
             num_proc=self.pipeline_config.actor_train.data_args.preprocessing_num_workers,
             desc="update_dataset_domain",
-            load_from_cache_file=False
+            load_from_cache_file=False,
         )
         self.domain_datasets: Dict[str, datasets.Dataset] = {}
         for domain in self.pipeline_config.actor_train.data_args.domain_interleave_probs.keys():
@@ -177,12 +181,12 @@ class RLVRPipeline(BasePipeline):
                 partial(update_dataset_domain, self.pipeline_config.tag_2_domain),
                 num_proc=self.pipeline_config.actor_train.data_args.preprocessing_num_workers,
                 desc="update_val_dataset_domain",
-                load_from_cache_file=False
+                load_from_cache_file=False,
             )
 
-        assert 'domain' in dataset.column_names, "domain field should set in dataset"
+        assert "domain" in dataset.column_names, "domain field should set in dataset"
         if self.val_dataset:
-            assert 'domain' in self.val_dataset.column_names, "domain field should set in val dataset"
+            assert "domain" in self.val_dataset.column_names, "domain field should set in val dataset"
 
         self.kl_ctrl = get_kl_controller(
             init_kl_coef=self.pipeline_config.init_kl_coef,
@@ -263,8 +267,10 @@ class RLVRPipeline(BasePipeline):
             self.generate_schedulers[domain] = generate_scheduler
             self.domain_batch_size[domain] = domain_batch_size
 
-            assert domain_batch_size < len(self.domain_datasets[domain]), (f"domain_batch_size {domain_batch_size} must be "
-                                                                           f"less than the number of domain datasets {len(self.domain_datasets[domain])}")
+            assert domain_batch_size < len(self.domain_datasets[domain]), (
+                f"domain_batch_size {domain_batch_size} must be "
+                f"less than the number of domain datasets {len(self.domain_datasets[domain])}"
+            )
 
         if self.val_dataset:
             val_pipeline_config = copy.deepcopy(self.pipeline_config)
@@ -362,9 +368,11 @@ class RLVRPipeline(BasePipeline):
                 batch.meta_info = {"global_step": global_step}
 
                 # 要按domain group by生成对应的batch
-                with actor_infer_timer, actor_infer_response_timer, Timer(
-                    name="step_generate", logger=None
-                ) as step_generate_timer:
+                with (
+                    actor_infer_timer,
+                    actor_infer_response_timer,
+                    Timer(name="step_generate", logger=None) as step_generate_timer,
+                ):
                     domain_batches = {}
                     batch.meta_info["generation_config"] = self.actor_infer.worker_config.generating_args.to_dict()
                     self.actor_infer.start_server(data=DataProto(meta_info=batch.meta_info))
@@ -374,7 +382,9 @@ class RLVRPipeline(BasePipeline):
                     batch.meta_info["is_offload_states"] = False
                     scheduler_refs = {}
                     for domain, scheduler in self.generate_schedulers.items():
-                        scheduler_refs[domain] = scheduler.get_batch.remote(data=batch, batch_size=self.domain_batch_size[domain])
+                        scheduler_refs[domain] = scheduler.get_batch.remote(
+                            data=batch, batch_size=self.domain_batch_size[domain]
+                        )
                     for domain, scheduler_ref in scheduler_refs.items():
                         domain_batch: DataProto = ray.get(scheduler_ref, timeout=self.pipeline_config.rpc_timeout)
                         metrics_mgr.add_domain_metrics(
@@ -382,7 +392,9 @@ class RLVRPipeline(BasePipeline):
                         )
                         domain_batches[domain] = domain_batch
                     generate_output = DataProto.concat([domain_batch for domain_batch in domain_batches.values()])
-                    dump_rollout_to_specific_path(self.pipeline_config.rollout_dump_dir, global_step, generate_output, self.tokenizer)
+                    dump_rollout_to_specific_path(
+                        self.pipeline_config.rollout_dump_dir, global_step, generate_output, self.tokenizer
+                    )
                     generate_output.meta_info.pop("is_offload_states", None)
 
                     for reward_cluster in self.rewards.values():
@@ -575,7 +587,7 @@ class RLVRPipeline(BasePipeline):
                 reward_cluster.load_states()
             generate_output: DataProto = ray.get(
                 self.val_generate_scheduler.get_batch.remote(data=batch, batch_size=len(self.val_dataset)),
-                timeout=self.pipeline_config.rpc_timeout
+                timeout=self.pipeline_config.rpc_timeout,
             )
             self.actor_infer.stop_server()
             generate_output.meta_info.pop("is_offload_states", None)

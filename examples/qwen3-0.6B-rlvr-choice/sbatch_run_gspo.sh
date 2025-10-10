@@ -27,7 +27,5 @@ srun --export=WANDB_API_KEY,MASTER_ADDR,MASTER_PORT \
     bash -c "
 set -euo pipefail
 
-cd /home/szhangfa/ROLL
-
-bash examples/qwen3-4B-rlvr-choice/run_rlvr_pipeline.sh
+bash examples/qwen3-0.6B-rlvr-choice/run_gspo_pipeline.sh
 "

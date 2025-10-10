@@ -11,9 +11,12 @@ def main():
         sys.exit(1)
 
     in_path, out_path = sys.argv[1], sys.argv[2]
-
-    with open(in_path, "r", encoding="utf-8") as f:
-        data = json.load(f)  # 期望为 list[dict]，每个包含: qid, messages([system,user]), output
+    if in_path.endswith(".jsonl"):
+        with open(in_path, "r", encoding="utf-8") as f:
+            data = [json.loads(line) for line in f if line.strip()]
+    else:
+        with open(in_path, "r", encoding="utf-8") as f:
+            data = json.load(f)  # 期望为 list[dict]，每个包含: qid, messages([system,user]), output
 
     out = []
     for rec in data:

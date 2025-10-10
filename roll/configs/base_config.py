@@ -11,6 +11,7 @@ from roll.utils.config_utils import validate_megatron_batch_size
 
 logger = get_logger()
 
+
 @dataclass
 class ScheduleConfig:
     generate_opt_level: int = field(
@@ -20,16 +21,11 @@ class ScheduleConfig:
         },
     )
     is_num_return_sequences_expand: bool = field(
-        default=False,
-        metadata={"help": "whether replicate `num_return_sequences` times in prompts or not."}
+        default=False, metadata={"help": "whether replicate `num_return_sequences` times in prompts or not."}
     )
-    max_running_requests: int = field(
-        default=128,
-        metadata={"help": "The maximum number of running requests."}
-    )
+    max_running_requests: int = field(default=128, metadata={"help": "The maximum number of running requests."})
     is_use_additional_prompts: bool = field(
-        default=False,
-        metadata={"help": "Whether to use additional prompts or not."}
+        default=False, metadata={"help": "Whether to use additional prompts or not."}
     )
     max_additional_running_prompts: int = field(
         default=16, metadata={"help": "The additional number of running prompts, beyond batch_size."}
@@ -43,41 +39,28 @@ class BaseConfig:
         default=os.path.basename(sys.argv[0])[: -len(".py")],
         metadata={"help": "The name of this experiment (defaults to the file name without the .py extension)."},
     )
-    seed: int = field(
-        default=42,
-        metadata={"help": "Random seed for initializations."}
-    )
-    rpc_timeout: int = field(
-        default=3600,
-        metadata={"help": "Timeout duration for RPC calls in seconds."}
-    )
+    seed: int = field(default=42, metadata={"help": "Random seed for initializations."})
+    rpc_timeout: int = field(default=3600, metadata={"help": "Timeout duration for RPC calls in seconds."})
     output_dir: str = field(
         default="./output",
         metadata={"help": "The output directory where the model predictions and checkpoints will be written."},
     )
-    logging_dir: str = field(
-        default="./output/logs",
-        metadata={"help": "Directory to store logs."})
+    logging_dir: str = field(default="./output/logs", metadata={"help": "Directory to store logs."})
     track_with: str = field(
         default="tensorboard",
-        metadata={"help": "The type of tracker to be used for tracking, one of ['wandb', 'tensorboard', 'stdout', 'swanlab']."}
+        metadata={
+            "help": "The type of tracker to be used for tracking, one of ['wandb', 'tensorboard', 'stdout', 'swanlab']."
+        },
     )
     tracker_kwargs: dict = field(
-        default_factory=dict,
-        metadata={"help": "Additional keyword arguments to pass to the Tracker class."}
+        default_factory=dict, metadata={"help": "Additional keyword arguments to pass to the Tracker class."}
     )
     max_steps: int = field(
         default=500,
         metadata={"help": "If > 0: set total number of pipeline steps"},
     )
-    save_steps: int = field(
-        default=50,
-        metadata={"help": "Save checkpoint every X update steps."}
-    )
-    logging_steps: int = field(
-        default=1,
-        metadata={"help": "Number of steps between logging information."}
-    )
+    save_steps: int = field(default=50, metadata={"help": "Save checkpoint every X update steps."})
+    logging_steps: int = field(default=1, metadata={"help": "Number of steps between logging information."})
     eval_steps: int = field(
         default=10,
         metadata={"help": "Run an evaluation every X steps."},
@@ -92,12 +75,9 @@ class BaseConfig:
             "0 means synchronous pipeline. currently only integer is supported."
         },
     )
-    val_batch_size: int = field(
-        default=128,
-        metadata={"help": "The number of samples to rollout in each val batch."})
+    val_batch_size: int = field(default=128, metadata={"help": "The number of samples to rollout in each val batch."})
     local_rank: int = field(
-        default=-1,
-        metadata={"help": "Local rank for distributed training; set to -1 if not applicable."}
+        default=-1, metadata={"help": "Local rank for distributed training; set to -1 if not applicable."}
     )
     resume_from_checkpoint: Union[bool, str] = field(
         default=False,
@@ -127,36 +107,26 @@ class BaseConfig:
         default=None,
         metadata={"help": "The maximum length of the sequence to be padded."},
     )
-    alive_check_interval: int = field(
-        default=10,
-        metadata={"help": "The interval of worker alive check."}
-    )
+    alive_check_interval: int = field(default=10, metadata={"help": "The interval of worker alive check."})
     profiler_timeline: bool = field(default=False, metadata={"help": "Whether to use profiler mode or not."})
     profiler_memory: bool = field(default=False, metadata={"help": "Whether to use profiler memory or not."})
     profiler_output_dir: str = field(
         default="./output/profiler", metadata={"help": "Directory to write profiler logs."}
     )
-    system_envs: dict = field(
-        default_factory=dict,
-        metadata={"help": "system environment variables."}
-    )
-    num_nodes: int = field(
-        default=1,
-        metadata={"help": "Number of nodes available for distributed training."}
-    )
+    system_envs: dict = field(default_factory=dict, metadata={"help": "system environment variables."})
+    num_nodes: int = field(default=1, metadata={"help": "Number of nodes available for distributed training."})
     num_gpus_per_node: int = field(
         default=8,
         metadata={
             "help": "Specifies the number of GPUs available per node. When the number of nodes is greater than 1, "
-                    "num_gpus_per_node should request the total number of GPUs in the entire node."
-                    "Ensure that GPU resource allocation aligns with the request in a multi-node setup."
-        }
+            "num_gpus_per_node should request the total number of GPUs in the entire node."
+            "Ensure that GPU resource allocation aligns with the request in a multi-node setup."
+        },
     )
     model_download_type: Optional[str] = field(
         default=None,
         metadata={"help": "snapshot_download func source type, such as MODELSCOPE, HUGGINGFACE_HUB."},
     )
-
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -172,17 +142,20 @@ class BaseConfig:
             self.response_length = None
 
         if self.val_prompt_length is None:
-            assert self.val_sequence_length is None, "val_prompt_length and val_sequence_length must be set simultaneously"
+            assert (
+                self.val_sequence_length is None
+            ), "val_prompt_length and val_sequence_length must be set simultaneously"
             self.val_prompt_length = self.prompt_length
             self.val_sequence_length = self.sequence_length
 
         if self.val_prompt_length is not None:
             assert self.val_sequence_length, "val_prompt_length and val_sequence_length must be set simultaneously"
 
-
         if self.track_with == "tensorboard":
             self.tracker_kwargs["log_dir"] = os.path.join(
-                self.tracker_kwargs.get("log_dir", self.output_dir), self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
+                self.tracker_kwargs.get("log_dir", self.output_dir),
+                self.exp_name,
+                datetime.now().strftime("%Y%m%d-%H%M%S"),
             )
             logger.info(f"add timestamp to tensorboard log_dir {self.tracker_kwargs['log_dir']}")
 
@@ -228,11 +201,15 @@ class BaseConfig:
         os.environ.update(self.system_envs)
 
         # Validate rollout_batch_size divisibility for Megatron data parallelism
-        if hasattr(self, 'actor_train') and isinstance(self.actor_train, WorkerConfig) and self.actor_train.strategy_args is not None:
+        if (
+            hasattr(self, "actor_train")
+            and isinstance(self.actor_train, WorkerConfig)
+            and self.actor_train.strategy_args is not None
+        ):
             strategy_name = self.actor_train.strategy_args.strategy_name
 
             # Only validate for Megatron strategies
-            if 'megatron' in strategy_name.lower():
+            if "megatron" in strategy_name.lower():
                 try:
                     validate_megatron_batch_size(
                         batch_size=self.rollout_batch_size,
@@ -243,9 +220,7 @@ class BaseConfig:
                     logger.error(f"Megatron DP validation failed: {e}")
                     raise
             else:
-                logger.debug(
-                    f"Skipping DP validation for non-Megatron actor_train strategy: {strategy_name}"
-                )
+                logger.debug(f"Skipping DP validation for non-Megatron actor_train strategy: {strategy_name}")
 
         # the required num nodes
         total_devices = []
@@ -260,7 +235,6 @@ class BaseConfig:
                 self.num_nodes = 1
             else:
                 self.num_nodes = (max_gpu_num + self.num_gpus_per_node - 1) // self.num_gpus_per_node
-
 
     def set_max_steps(self, max_steps: int):
         for attribute_name in dir(self):

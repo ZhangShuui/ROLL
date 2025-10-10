@@ -14,8 +14,8 @@ hydra:
 # ========= 基础信息 =========
 exp_name: "qwen3-1-7B-rlvr-exact-h800-8gpu"
 seed: 42
-logging_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/logs
-output_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/output
+logging_dir: /project/hdtaccuracy/trains/gspo/qwen3_1_7b_choice_v4/logs
+output_dir: /project/hdtaccuracy/trains/gspo/qwen3_1_7b_choice_v4/output
 num_gpus_per_node: 8      # 8×H800
 # num_gpus_per_node: 4      # 2×H800
 
@@ -34,20 +34,23 @@ max_steps: 400
 save_steps: 50
 logging_steps: 1
 # eval_steps: 50
-resume_from_checkpoint: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/output/pipeline/checkpoint-50
+resume_from_checkpoint: false
 
 # ========= RL 超参 =========
 rollout_batch_size: 64
 prompt_length: 1024
 response_length: 2048
+importance_sampling: seq
 num_return_sequences_in_group: 8
 ppo_epochs: 1
 adv_estimator: "grpo"
 value_clip: 0.5
 reward_clip: 10
+dual_clip_loss: true
 reward_normalize: true
 advantage_clip: 2.0
 whiten_advantages: true
+
 
 use_kl_loss: true
 kl_loss_coef: 0.001
@@ -60,7 +63,7 @@ validation:
   data_args:
     template: qwen3
     file_name:
-      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/roll/val.json
+      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_with_thinking/roll/val.json
     max_samples: 100
   generating_args:
     do_sample: True

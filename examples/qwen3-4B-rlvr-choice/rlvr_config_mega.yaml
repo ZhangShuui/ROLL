@@ -5,6 +5,8 @@ defaults:
   - ../config/deepspeed_zero2@_here_
   - ../config/deepspeed_zero3@_here_
   - ../config/deepspeed_zero3_cpuoffload@_here_
+  - ../config/deepspeed_zero3_opti@_here_
+
 
 hydra:
   run:
@@ -12,10 +14,10 @@ hydra:
   output_subdir: null
 
 # ========= 基础信息 =========
-exp_name: "qwen3-1-7B-rlvr-exact-h800-8gpu"
+exp_name: "qwen3-4B-rlvr-grpo-h800-8gpu"
 seed: 42
-logging_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/logs
-output_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/output
+logging_dir: /project/hdtaccuracy/trains/grpo/qwen3_4b_choice_v4/logs
+output_dir: /project/hdtaccuracy/trains/grpo/qwen3_4b_choice_v4/output
 num_gpus_per_node: 8      # 8×H800
 # num_gpus_per_node: 4      # 2×H800
 
@@ -34,7 +36,7 @@ max_steps: 400
 save_steps: 50
 logging_steps: 1
 # eval_steps: 50
-resume_from_checkpoint: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/output/pipeline/checkpoint-50
+resume_from_checkpoint: /project/hdtaccuracy/trains/grpo/qwen3_4b_choice_v4/output/pipeline/checkpoint-250
 
 # ========= RL 超参 =========
 rollout_batch_size: 64
@@ -53,14 +55,15 @@ use_kl_loss: true
 kl_loss_coef: 0.001
 loss_agg_mode: "seq-mean-token-mean"
 
+
 # ========= 预训练权重 =========
-pretrain: /project/hdtaccuracy/models/base/Qwen3-1.7B
+pretrain: /project/hdtaccuracy/models/base/Qwen3-4B
 # reward_pretrain: /project/hdtaccuracy/models/base/Qwen3-8B            # critic 初始权重
 validation:
   data_args:
     template: qwen3
     file_name:
-      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/roll/val.json
+      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_with_thinking/roll/val.json
     max_samples: 100
   generating_args:
     do_sample: True
@@ -86,8 +89,8 @@ actor_train:
   training_args:
     learning_rate: 1.0e-6    # LoRA 常用 1e-4–1e-3
     weight_decay: 0.0
-    per_device_train_batch_size: 16   # ZeRO-3 显存足够可翻倍
-    gradient_accumulation_steps: 16  # 2×16 ≈ 原来 1×32
+    per_device_train_batch_size: 8   # ZeRO-3 显存足够可翻倍
+    gradient_accumulation_steps: 32  # 2×16 ≈ 原来 1×32
     warmup_steps: 0
     num_train_epochs: 5
     max_samples: 9000

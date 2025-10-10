@@ -6,3 +6,4 @@ from roll.pipeline.rlvr.rewards.llm_judge_reward_worker import LLMJudgeRewardWor
 from roll.pipeline.rlvr.rewards.math_rule_reward_worker import MathRuleRewardWorker
 from roll.pipeline.rlvr.rewards.peralign_llm_judge_reward_worker import PerAlignLLMJudgeRewardWorker
 from roll.pipeline.rlvr.rewards.peralign_choice_reward_worker import PerAlignChoiceRewardWorker
+from roll.pipeline.rlvr.rewards.peralign_specific_reward_worker import PerAlignChoiceSpecificSentenceRewardWorker

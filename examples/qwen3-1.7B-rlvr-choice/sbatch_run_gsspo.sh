@@ -6,16 +6,10 @@
 #SBATCH --exclude=dgx-34,dgx-20
 #SBATCH --time=30:00:00
 #SBATCH --account=hdtaccuracy
-#SBATCH --partition=preempt
+#SBATCH --partition=normal
 ##SBATCH --container-writable
 ##SBATCH --container-image /home/szhangfa/containers/roll.img
 ##SBATCH --container-save /home/szhangfa/containers/roll.img
-
-# cd /home/szhangfa/LLaMA-Factory
-export WANDB_API_KEY=dce12064d30900b2cc538f73e82997de5aafbb96
-
-export MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n1)
-export MASTER_PORT=$(( 20000 + RANDOM % 10000 ))
 
 srun --export=WANDB_API_KEY,MASTER_ADDR,MASTER_PORT \
     --container-image=/project/hdtaccuracy/images/roll.img \
@@ -28,6 +22,6 @@ srun --export=WANDB_API_KEY,MASTER_ADDR,MASTER_PORT \
 set -euo pipefail
 
 cd /home/szhangfa/ROLL
-
-bash examples/qwen3-4B-rlvr-choice/run_rlvr_pipeline.sh
+# python3 -m pip install -r requirements_torch260_vllm.txt
+bash examples/qwen3-1.7B-rlvr-choice/run_gsspo_pipeline.sh
 "

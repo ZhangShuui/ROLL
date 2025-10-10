@@ -1,10 +1,8 @@
 # ---------- rlvr_config_ds_lora.yaml ----------
 # ① 继承 DeepSpeed 预设
 defaults:
-  - ../config/deepspeed_zero@_here_
+  # - ../config/deepspeed_zero@_here_
   - ../config/deepspeed_zero2@_here_
-  - ../config/deepspeed_zero3@_here_
-  - ../config/deepspeed_zero3_cpuoffload@_here_
 
 hydra:
   run:
@@ -12,10 +10,10 @@ hydra:
   output_subdir: null
 
 # ========= 基础信息 =========
-exp_name: "qwen3-1-7B-rlvr-exact-h800-8gpu"
+exp_name: "qwen3-4B-rlvr-exact-ppo"
 seed: 42
-logging_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/logs
-output_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/output
+logging_dir: /project/hdtaccuracy/trains/ppo/qwen3_4b_choice_v4/logs
+output_dir: /project/hdtaccuracy/trains/ppo/qwen3_4b_choice_v4/output
 num_gpus_per_node: 8      # 8×H800
 # num_gpus_per_node: 4      # 2×H800
 
@@ -28,39 +26,49 @@ tracker_kwargs:
    - rlvr
    - baseline
   
-
 # ========= 训练控制 =========
 max_steps: 400
 save_steps: 50
 logging_steps: 1
 # eval_steps: 50
-resume_from_checkpoint: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v4/output/pipeline/checkpoint-50
+resume_from_checkpoint: false
 
 # ========= RL 超参 =========
-rollout_batch_size: 64
+rollout_batch_size: 128
 prompt_length: 1024
 response_length: 2048
-num_return_sequences_in_group: 8
-ppo_epochs: 1
-adv_estimator: "grpo"
-value_clip: 0.5
-reward_clip: 10
-reward_normalize: true
-advantage_clip: 2.0
-whiten_advantages: true
 
+adv_estimator: "gae"
+num_return_sequences_in_group: 1
+ppo_epochs: 1
 use_kl_loss: true
 kl_loss_coef: 0.001
 loss_agg_mode: "seq-mean-token-mean"
 
+whiten_advantages: true
+advantage_clip: 2.0
+reward_clip: 10
+dual_clip_loss: true
+lambd: 0.95
+gamma: 1
+pg_clip: 0.2
+value_clip: ~
+kl_penalty: "kl"
+target_kl: ~
+init_kl_coef: 0.01
+kl_horizon: 10000
+add_token_level_kl: false
+# normalize
+norm_mean_type: ~
+
 # ========= 预训练权重 =========
-pretrain: /project/hdtaccuracy/models/base/Qwen3-1.7B
+pretrain: /project/hdtaccuracy/models/base/Qwen3-4B
 # reward_pretrain: /project/hdtaccuracy/models/base/Qwen3-8B            # critic 初始权重
 validation:
   data_args:
     template: qwen3
     file_name:
-      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/roll/val.json
+      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_with_thinking/roll/val.json
     max_samples: 100
   generating_args:
     do_sample: True
@@ -84,11 +92,12 @@ actor_train:
     # lora_alpha: 32
     # lora_dropout: 0.05
   training_args:
+    max_steps: 400
     learning_rate: 1.0e-6    # LoRA 常用 1e-4–1e-3
     weight_decay: 0.0
-    per_device_train_batch_size: 16   # ZeRO-3 显存足够可翻倍
-    gradient_accumulation_steps: 16  # 2×16 ≈ 原来 1×32
-    warmup_steps: 0
+    per_device_train_batch_size: 2   # ZeRO-3 显存足够可翻倍
+    gradient_accumulation_steps: 32  # 2×16 ≈ 原来 1×32
+    warmup_steps: 10
     num_train_epochs: 5
     max_samples: 9000
   data_args:
@@ -100,26 +109,6 @@ actor_train:
     domain_interleave_probs:
       # llm_judge: 1.0
       math_rule: 1.0
-  # strategy_args:
-    # strategy_name: deepspeed_train         # ← 从 megatron_train 改成 DS
-    # strategy_config: 
-    #   train_micro_batch_size_per_gpu: auto
-    #   bf16:
-    #     enabled: true
-    #   fp16:
-    #     enabled: false
-    #   zero_optimization:
-    #     stage: 3
-    #     overlap_comm: true
-    #     contiguous_gradients: true
-    #     reduce_scatter: true
-    #     allgather_partitions: true
-    #     allgather_bucket_size: 500000000    # 5e8
-    #     reduce_bucket_size: 500000000    # 5e8
-
-    #     stage3_prefetch_bucket_size: 500000000
-    #     stage3_param_persistence_threshold: 1000000
-    #     stage3_gather_16bit_weights_on_model_save: true
   strategy_args:
     strategy_name: megatron_train
     strategy_config:
@@ -132,7 +121,7 @@ actor_train:
       use_distributed_optimizer: true
       bf16: true
 
-  device_mapping: "[0, 1, 2, 3, 4 ,5, 6, 7]"             # 与原先保持一致
+  device_mapping: "[0, 1, 2, 3]"             # 与原先保持一致
   # device_mapping: "[0, 1]"
   # infer_batch_size: 8
 
@@ -160,7 +149,7 @@ actor_infer:
       block_size: 16
       max_model_len: 3072
   num_gpus_per_worker: 1
-  device_mapping: "[6,7]"                     # GPU4
+  device_mapping: "[6, 7]"                     # GPU4
   # device_mapping: "[0, 1]"
   infer_batch_size: 2
 
@@ -178,7 +167,49 @@ reference:
       tensor_model_parallel_size: 1
       pipeline_model_parallel_size: 1
   # device_mapping: "[6, 7]"                    # GPU5
-  device_mapping: "[0, 1]"
+  device_mapping: "[4, 5]"
+  infer_batch_size: 2
+
+critic:
+  model_args:
+    model_name_or_path: /project/hdtaccuracy/models/base/Qwen3-4B
+    tokenizer_name_or_path: /project/hdtaccuracy/models/base/Qwen3-4B
+    disable_gradient_checkpointing: true
+    dtype: bf16
+    flash_attn: fa2
+    attn_implementation: fa2
+    model_type: trl
+  training_args:
+    max_steps: 400
+    learning_rate: 1.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 1
+    warmup_steps: 10
+  data_args:
+    template: qwen3
+  strategy_args:
+    strategy_name: deepspeed_train
+    strategy_config: 
+      train_micro_batch_size_per_gpu: auto
+      bf16:
+        enabled: true
+      fp16:
+        enabled: false
+        loss_scale: 0
+        initial_scale_power: 16
+        loss_scale_window: 1000
+        hysteresis: 2
+        min_loss_scale: 1
+      zero_optimization:
+        stage: 2
+        allgather_partitions: true
+        allgather_bucket_size: 1.0e+9
+        overlap_comm: true
+        reduce_scatter: true
+        reduce_bucket_size: 5.0e+8
+        contiguous_gradients: true
+  device_mapping: "[4, 5, 6, 7]"                    # GPU2,3
   infer_batch_size: 2
 
 # ========= Reward =========

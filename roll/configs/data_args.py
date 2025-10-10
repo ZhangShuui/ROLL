@@ -38,6 +38,12 @@ class DataArguments:
     response: Optional[str] = field(default="solution", metadata={"help": "Which column in file to use as label"})
     # image: Optional[str] = field(default='image', metadata={"help": "Which column in file to use as image"})
     messages: Optional[str] = field(default=None, metadata={"help": "Which column in file to use as messages"})
+    max_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of training examples to this value if set."
+        },
+    )
 
     def __post_init__(self):
         assert not (

@@ -29,5 +29,5 @@ set -euo pipefail
 
 cd /home/szhangfa/ROLL
 
-bash examples/qwen3-4B-rlvr-choice/run_rlvr_pipeline.sh
+bash examples/qwen3-4B-rlvr-choice/run_gspo_pipeline.sh
 "

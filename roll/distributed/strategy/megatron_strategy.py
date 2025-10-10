@@ -45,7 +45,15 @@ from roll.third_party.megatron.offload_states_patch import (
 from roll.third_party.megatron.optimizer import get_megatron_optimizer
 from roll.third_party.megatron.tensor_parallel import vocab_parallel_entropy
 from roll.utils.collective import collective
-from roll.utils.constants import DIST_OPTIMIZER_DIR, IGNORE_INDEX, OPTIMIZER_NAME, RNG_STATE_DIR, SCHEDULER_NAME, RAY_NAMESPACE, BARRIER_NAME
+from roll.utils.constants import (
+    DIST_OPTIMIZER_DIR,
+    IGNORE_INDEX,
+    OPTIMIZER_NAME,
+    RNG_STATE_DIR,
+    SCHEDULER_NAME,
+    RAY_NAMESPACE,
+    BARRIER_NAME,
+)
 from roll.utils.context_managers import disable_gradients
 from roll.utils.functionals import append_to_dict
 from roll.utils.logging import get_logger
@@ -61,10 +69,12 @@ class MegatronInferStrategy(InferenceStrategy):
     def __init__(self, worker: Worker):
         super().__init__(worker)
         config_dict = self.worker_config.training_args.to_dict()
+        print(f"training_args before update: {config_dict}")
         config_dict.update(self.worker_config.strategy_args.strategy_config)
         # maybe put max_grad_norm into training_args as transformers do, rather
         # than in pipeline_config (PPOConfig)
-        config_dict.update({"max_grad_norm": self.worker.pipeline_config.max_grad_norm})
+        if worker.pipeline_config and worker.pipeline_config.max_grad_norm is not None:
+            config_dict.update({"max_grad_norm": self.worker.pipeline_config.max_grad_norm})
         logger.info(f"training_args: {config_dict}")
         self.megatron_train_args = TrainingArguments(**config_dict)
         self.model = None
@@ -74,7 +84,9 @@ class MegatronInferStrategy(InferenceStrategy):
         # hard to impl with offload states
         assert not self.megatron_train_args.overlap_param_gather, "overlap_param_gather is not supported"
         if self.worker_config.use_remove_padding:
-            assert self.megatron_train_args.allow_variable_seq_lengths(), "when use_remove_padding=True, must set variable_seq_lengths=True for megatron."
+            assert (
+                self.megatron_train_args.allow_variable_seq_lengths()
+            ), "when use_remove_padding=True, must set variable_seq_lengths=True for megatron."
 
     def initialize(self, model_provider):
         self.tokenizer = default_tokenizer_provider(model_args=self.worker_config.model_args)
@@ -158,9 +170,9 @@ class MegatronInferStrategy(InferenceStrategy):
         results = collate_fn_to_dict_list(losses_reduced)
 
         if not (
-                (self.worker.rank_info.tp_rank == 0 or output_on_all_tp_ranks)
-                and self.worker.rank_info.cp_rank == 0
-                and self.worker.rank_info.is_pipeline_last_stage
+            (self.worker.rank_info.tp_rank == 0 or output_on_all_tp_ranks)
+            and self.worker.rank_info.cp_rank == 0
+            and self.worker.rank_info.is_pipeline_last_stage
         ):
             return None
         return results
@@ -191,7 +203,7 @@ class MegatronInferStrategy(InferenceStrategy):
 
         input_ids = self._get_feature_on_this_cp_rank(input_ids, "input_ids")
         attention_mask = self._get_feature_on_this_cp_rank(attention_mask, "attention_mask")
-        labels = data.batch["labels"] if "labels" in data.batch else None # labels is only used for sft
+        labels = data.batch["labels"] if "labels" in data.batch else None  # labels is only used for sft
         if labels is not None:
             labels = self._get_feature_on_this_cp_rank(labels, "labels")
         position_ids = None
@@ -223,9 +235,13 @@ class MegatronInferStrategy(InferenceStrategy):
                 # DataProto.to('cuda') in upper frame not work for non_tensor_batch
                 forward_args[key] = torch.concat(multi_modal_data[key], dim=0).to(input_ids.device)
             forward_args.update({"force_vit_image": True})
-        
+
         output_tensor = model(
-            input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, labels=labels, **forward_args
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            labels=labels,
+            **forward_args,
         )
 
         return output_tensor, partial(loss_func, data)
@@ -286,12 +302,12 @@ class MegatronInferStrategy(InferenceStrategy):
 
     def op_compute_logits(self, logits: torch.Tensor):
         full_logits = gather_from_tensor_model_parallel_region(logits)
-        #TODO: support CP & use remove padding
+        # TODO: support CP & use remove padding
         return full_logits
 
     def op_compute_language_loss(self, losses: torch.Tensor, labels: torch.Tensor):
         labels = self._get_feature_on_this_cp_rank(labels, "labels")
-        
+
         loss_mask = (labels != IGNORE_INDEX).float()
         loss_mask = loss_mask.view(-1).float()
         losses = torch.sum(losses.view(-1) * loss_mask)
@@ -304,14 +320,14 @@ class MegatronInferStrategy(InferenceStrategy):
             )
             losses, loss_mask = loss_info[0], loss_info[1]
 
-        loss = losses.clone() # clone to make sure loss is not a view 
+        loss = losses.clone()  # clone to make sure loss is not a view
 
         local_num_tokens = loss_mask.clone().detach()
         if local_num_tokens == 0:
             local_num_tokens += 1  # avoid divide by zero
 
         metrics = {f"{self.worker_config.name}/loss": (loss / local_num_tokens).clone().detach().unsqueeze(0)}
-        
+
         return loss, local_num_tokens.int(), metrics
 
 
@@ -394,11 +410,15 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
         self.worker.rank_info.cp_size = mpu.get_context_parallel_world_size()
         self.worker.rank_info.cp_rank = mpu.get_context_parallel_rank()
 
-        self.barrier = Barrier.options(
-            name=BARRIER_NAME, get_if_exists=True, namespace=RAY_NAMESPACE
-        ).remote(self.worker.world_size / self.worker.rank_info.pp_size)
-
+        self.barrier = Barrier.options(name=BARRIER_NAME, get_if_exists=True, namespace=RAY_NAMESPACE).remote(
+            self.worker.world_size / self.worker.rank_info.pp_size
+        )
+        if self.worker_config.training_args.max_steps == 0:
+            self.worker_config.training_args.max_steps = (
+                self.worker.pipeline_config.max_steps * self.worker.rank_info.dp_size
+            )
         logger.info(f"max steps pipeline {self.worker_config.training_args.max_steps}")
+
         self.worker_config.training_args.max_steps = (
             self.worker_config.training_args.max_steps // self.worker.rank_info.dp_size
         )
@@ -406,7 +426,7 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
         logger.info(f"max steps worker train {self.worker_config.training_args.max_steps}")
 
         self.scheduler = get_megatron_lr_scheduler(
-            self.megatron_train_args, self.megatron_train_args.max_steps, optimizer=self.optimizer
+            self.megatron_train_args, self.worker_config.training_args.max_steps, optimizer=self.optimizer
         )
 
         if self.megatron_train_args.use_distributed_optimizer:
@@ -438,7 +458,9 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
 
         mini_batch_size = self.worker_config.training_args.per_device_train_batch_size
         num_microbatches = batch.batch.batch_size[0] // self.worker_config.training_args.per_device_train_batch_size
-        is_offload_optimizer_states_in_train_step = batch.meta_info.get("is_offload_optimizer_states_in_train_step", True)
+        is_offload_optimizer_states_in_train_step = batch.meta_info.get(
+            "is_offload_optimizer_states_in_train_step", True
+        )
         assert (
             num_microbatches == self.megatron_train_args.gradient_accumulation_steps
         ), f"num_microbatches={num_microbatches} gradient_accumulation_steps={self.megatron_train_args.gradient_accumulation_steps}"
@@ -502,8 +524,11 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
                 with Timer("broadcast") as timer_broadcast:
                     for p2p_tgt_device in p2p_tgt_devices:
                         p2p_tgt_worker = tgt_workers[p2p_tgt_device["rank"]]
-                        ref = p2p_tgt_worker.update_parameter_in_bucket.remote(model_update_name=model_update_name,
-                            meta_infos=meta_infos, buffer=buffer, ranks_in_worker=[p2p_tgt_device["device"]["rank"]]
+                        ref = p2p_tgt_worker.update_parameter_in_bucket.remote(
+                            model_update_name=model_update_name,
+                            meta_infos=meta_infos,
+                            buffer=buffer,
+                            ranks_in_worker=[p2p_tgt_device["device"]["rank"]],
                         )
                         refs.append(ref)
 
@@ -571,8 +596,9 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
         if len(self.models_unwrapped) == 1:
             self.models_unwrapped[0].save_pretrained(save_dir)
         else:
-            state_dict = {f"model{i}": model.state_dict_for_save_checkpoint() for i, model in
-                          enumerate(self.models_unwrapped)}
+            state_dict = {
+                f"model{i}": model.state_dict_for_save_checkpoint() for i, model in enumerate(self.models_unwrapped)
+            }
             self.models_unwrapped[0].save_pretrained(save_dir, state_dict=state_dict)
         if dist.get_rank() == 0:
             if self.tokenizer is not None:
@@ -581,15 +607,17 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
                 self.processor.save_pretrained(save_dir)
 
         # save optimizer
-        checkpoint_dir = get_checkpoint_dir(save_dir,
-                                            return_base_dir=self.megatron_train_args.use_distributed_optimizer)
+        checkpoint_dir = get_checkpoint_dir(
+            save_dir, return_base_dir=self.megatron_train_args.use_distributed_optimizer
+        )
         if self.megatron_train_args.use_distributed_optimizer:
             checkpoint_dir = os.path.join(checkpoint_dir, DIST_OPTIMIZER_DIR)
         os.makedirs(checkpoint_dir, exist_ok=True)
         if self.megatron_train_args.use_distributed_optimizer:
             model_shared_state_dict = self.model.sharded_state_dict()
-            optimizer_state_dict = self.optimizer.sharded_state_dict(model_shared_state_dict,
-                                                                     sharding_type="fully_sharded_model_space")
+            optimizer_state_dict = self.optimizer.sharded_state_dict(
+                model_shared_state_dict, sharding_type="fully_sharded_model_space"
+            )
             dist_checkpointing.save(
                 optimizer_state_dict,
                 checkpoint_dir=checkpoint_dir,
@@ -622,7 +650,9 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
         torch.save(rng_states, rgn_path)
 
         if self.worker_config.checkpoint_config.get("async_upload", True):
-            self.thread_executor.submit(self.checkpoint_manager.upload, ckpt_id=ckpt_id, local_state_path=local_state_path)
+            self.thread_executor.submit(
+                self.checkpoint_manager.upload, ckpt_id=ckpt_id, local_state_path=local_state_path
+            )
         else:
             self.checkpoint_manager.upload(ckpt_id=ckpt_id, local_state_path=local_state_path)
 
@@ -656,8 +686,9 @@ class MegatronTrainStrategy(MegatronInferStrategy, TrainStrategy):
             state_dict = dist_checkpointing.load(sharded_state_dict, optimizer_checkpoint, load_strategy)
         else:
             state_dict = torch.load(
-                os.path.join(optimizer_checkpoint, OPTIMIZER_NAME), map_location=self.megatron_train_args.device,
-                weights_only=False
+                os.path.join(optimizer_checkpoint, OPTIMIZER_NAME),
+                map_location=self.megatron_train_args.device,
+                weights_only=False,
             )
         self.optimizer.load_state_dict(state_dict)
 

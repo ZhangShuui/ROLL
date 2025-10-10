@@ -33,11 +33,28 @@
 #   --val_ratio 0.1 \
 #   --show_stats \
 #   --skip_missing_prompt
+# python build_choice_training_data.py \
+#   --questions /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/merged_choice_questions.json \
+#   --prompts /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/dialogue_dataset_all_v9_summarized_cleaned.jsonl \
+#   --out /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/training_data_nothink.jsonl \
+#   --prompt_type no_think \
+#   --skip_invalid_format \
+#   --split_mode user_partial \
+#   --user_subset_ratio 0.3 \
+#   --test_ratio 0.3 \
+#   --make_val \
+#   --val_ratio 0.1 \
+#   --show_stats \
+#   --filter_long_prompts \
+#   --skip_missing_prompt \
+#   --show_token_stats \
+#   --tokenizer_model "/project/hdtaccuracy/models/base/Qwen3-4B"
+
 python build_choice_training_data.py \
   --questions /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/merged_choice_questions.json \
   --prompts /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/dialogue_dataset_all_v9_summarized_cleaned.jsonl \
-  --out /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/training_data_nothink.jsonl \
-  --prompt_type no_think \
+  --out /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_with_thinking/training_data_with_think.jsonl \
+  --prompt_type with_think \
   --skip_invalid_format \
   --split_mode user_partial \
   --user_subset_ratio 0.3 \
@@ -45,6 +62,7 @@ python build_choice_training_data.py \
   --make_val \
   --val_ratio 0.1 \
   --show_stats \
+  --filter_long_prompts \
   --skip_missing_prompt \
   --show_token_stats \
   --tokenizer_model "/project/hdtaccuracy/models/base/Qwen3-4B"

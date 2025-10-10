@@ -1,0 +1,18 @@
+deepspeed_zero3:
+  train_micro_batch_size_per_gpu: auto
+  bf16:
+    enabled: true
+  fp16:
+    enabled: false
+  zero_optimization:
+    stage: 3
+    overlap_comm: true
+    contiguous_gradients: true
+    reduce_scatter: true
+    allgather_partitions: true
+    allgather_bucket_size: 500000000    # 5e8
+    reduce_bucket_size:    500000000    # 5e8
+
+    stage3_prefetch_bucket_size: 500000000
+    stage3_param_persistence_threshold: 1000000
+    stage3_gather_16bit_weights_on_model_save: true

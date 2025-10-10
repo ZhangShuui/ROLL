@@ -128,7 +128,7 @@ def build_prompts_from_messages(tokenizer, messages_batch):
     for messages in messages_batch:
         prompt = tokenizer.apply_chat_template(
             messages,
-            max_length=4000,
+            max_length=2500,
             tokenize=False,
             add_generation_prompt=True,
             enable_thinking=False,
@@ -152,7 +152,7 @@ def generate_response_batch(model, tokenizer, messages_list, max_new_tokens=200,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=4000,
+            max_length=2500,
         ).to(model.device)
 
         outputs = model.generate(

@@ -207,8 +207,9 @@ def entropy_from_logits(logits: torch.Tensor):
     return entropy
 
 
-def agg_loss(loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str,
-             weights: Optional[torch.Tensor] = None):
+def agg_loss(
+    loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str, weights: Optional[torch.Tensor] = None
+):
     """
     ref: https://github.com/volcengine/verl/blob/78532923368aeb058f62201489546d013df47710/verl/trainer/ppo/core_algos.py#L370
     Aggregate the loss matrix into a scalar.
@@ -232,11 +233,11 @@ def agg_loss(loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str
             weights = torch.ones(loss_mask.shape[0], device=loss_mask.device)
         loss = masked_mean(loss_mat * weights.unsqueeze(-1), loss_mask)
     elif loss_agg_mode == "seq-mean-token-sum":
-        seq_losses = masked_sum(loss_mat, loss_mask, dim=-1) # token-sum
+        seq_losses = masked_sum(loss_mat, loss_mask, dim=-1)  # token-sum
         valid_samples = torch.any(loss_mask > 0, dim=-1).float()
         if weights is None:
             weights = torch.ones(loss_mask.shape[0], device=loss_mask.device)
-        loss = (seq_losses * weights * valid_samples).sum() / (valid_samples.sum() + 1e-8) # seq-mean
+        loss = (seq_losses * weights * valid_samples).sum() / (valid_samples.sum() + 1e-8)  # seq-mean
     elif loss_agg_mode == "seq-mean-token-mean":
         seq_losses = masked_mean(loss_mat, loss_mask, dim=-1)
         valid_samples = torch.any(loss_mask > 0, dim=-1).float()
@@ -265,6 +266,7 @@ def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int = None) -> to
         return torch.where(mask_sum > 0, (tensor * mask).sum(axis=dim) / (mask_sum + 1e-8), torch.zeros_like(mask_sum))
     else:
         return (tensor * mask).sum() / (mask.sum() + 1e-8)
+
 
 def masked_sum(tensor: torch.Tensor, mask: torch.Tensor, dim: int = None) -> torch.Tensor:
     if dim is not None:
@@ -430,30 +432,75 @@ def compute_gae_advantage_return(
     return advantages, returns
 
 
-def expand_to_token_level(data: "DataProto"):
-    response_level_rewards = data.batch["response_level_rewards"].clone().detach()
-    batch_size = data.batch.batch_size[0]
-    # expand as token_level_rewards
+# def expand_to_token_level(data: "DataProto"):
+#     response_level_rewards = data.batch["response_level_rewards"].clone().detach()
+#     batch_size = data.batch.batch_size[0]
+#     # expand as token_level_rewards
+#     attention_mask = data.batch["attention_mask"]
+#     position_ids = data.batch["position_ids"]
+#     if position_ids.dim() == 3:
+#         # qwen2vl, (bsz, 3, seqlen), 0/1/2 is same for text, while values of
+#         # position_ids for text cannot stand for index of tokens, thus use the
+#         # right padding attention_mask to calculate eos index or `argmax` rather
+#         # than `max` of position_ids to calculate eos index
+#         position_ids = position_ids[:, 0]
+#     eos_mask_idx = torch.argmax(position_ids * attention_mask, dim=-1)  # (bsz,)
+#     token_level_rewards = torch.zeros_like(attention_mask, dtype=response_level_rewards.dtype)  # (bsz, seqlen)
+
+#     token_level_rewards[torch.arange(batch_size), eos_mask_idx] = response_level_rewards
+
+#     # select the response part
+#     token_level_rewards = token_level_rewards[:, 1:]
+
+#     return token_level_rewards
+
+
+def expand_to_token_level(data: "DataProto", use_token_level_reward: bool = False):
+    """
+    优先使用 worker 提供的 token 级奖励；若不存在，则严格回退到原逻辑：
+    仅在 EoS 位置赋值 response-level reward，然后再 [:, 1:].
+    """
+    resp_mask = data.batch["response_mask"][:, 1:].to(torch.bool)  # [B, L_resp]
+    B, L_resp = resp_mask.shape
+
+    # 1) 优先使用已有 token-level 奖励，并与 response_mask[:,1:] 对齐
+    if "token_level_rewards" in data.batch and use_token_level_reward:
+        tok = data.batch["token_level_rewards"].detach()
+        if tok.dim() == 2 and tok.size(0) == B and tok.size(1) == L_resp:
+            return tok
+        # 安全映射：按每样本响应长度填充到 mask==1 的位置
+        out = torch.zeros(B, L_resp, dtype=tok.dtype, device=tok.device)
+        for i in range(B):
+            n = int(resp_mask[i].sum().item())
+            if n <= 0:
+                continue
+            src = tok[i]
+            fill = (
+                src[:n]
+                if src.numel() >= n
+                else torch.cat([src, torch.zeros(n - src.numel(), dtype=tok.dtype, device=tok.device)], dim=0)
+            )
+            out[i, resp_mask[i]] = fill
+        return out
+
+    # 2) 回退：保持原行为——只在 EoS 位置放 response-level reward
+    response_level_rewards = data.batch["response_level_rewards"].clone().detach()  # [B]
     attention_mask = data.batch["attention_mask"]
     position_ids = data.batch["position_ids"]
     if position_ids.dim() == 3:
-        # qwen2vl, (bsz, 3, seqlen), 0/1/2 is same for text, while values of
-        # position_ids for text cannot stand for index of tokens, thus use the
-        # right padding attention_mask to calculate eos index or `argmax` rather
-        # than `max` of position_ids to calculate eos index
         position_ids = position_ids[:, 0]
-    eos_mask_idx = torch.argmax(position_ids * attention_mask, dim=-1)  # (bsz,)
-    token_level_rewards = torch.zeros_like(attention_mask, dtype=response_level_rewards.dtype)  # (bsz, seqlen)
+    eos_mask_idx = torch.argmax(position_ids * attention_mask, dim=-1)  # [B]
 
-    token_level_rewards[torch.arange(batch_size), eos_mask_idx] = response_level_rewards
+    token_rewards_full = torch.zeros_like(attention_mask, dtype=response_level_rewards.dtype)
+    token_rewards_full[torch.arange(B, device=attention_mask.device), eos_mask_idx] = response_level_rewards
 
-    # select the response part
-    token_level_rewards = token_level_rewards[:, 1:]
-
-    return token_level_rewards
+    # 与后续 log_probs/kl 对齐
+    return token_rewards_full[:, 1:]
 
 
-def reward_norm(response_level_rewards: torch.Tensor, n_sample=-1, running_ctrl={}, norm_mean_type=None, norm_std_type=None):
+def reward_norm(
+    response_level_rewards: torch.Tensor, n_sample=-1, running_ctrl={}, norm_mean_type=None, norm_std_type=None
+):
     group_mode = (norm_mean_type == "group") or (norm_std_type == "group")
     if group_mode and n_sample > 0:
         reshape_reward = response_level_rewards.reshape(*response_level_rewards.size()[:-1], -1, n_sample)
@@ -482,12 +529,13 @@ def reward_norm(response_level_rewards: torch.Tensor, n_sample=-1, running_ctrl=
     if norm_std_type is not None:
         normalized_rewards = (rewards - reward_mean) / (reward_std + 1e-6)
     else:
-        normalized_rewards = (rewards - reward_mean)
+        normalized_rewards = rewards - reward_mean
 
     # 如果是对 group mean 归一化，需要恢复原始形状
     if norm_mean_type == "group":
         normalized_rewards = normalized_rewards.reshape(*response_level_rewards.size())
     return normalized_rewards
+
 
 def group_reward_norm(data: "DataProto", n_sample=-1, div_std=True, div_std_global=False):
     assert n_sample > 1, "n_sample must > 1"
@@ -516,7 +564,7 @@ def difficulty_mask(data: "DataProto", n_sample=-1, low_threshold=0.1, high_thre
 
 @torch.no_grad()
 def compute_token_reward(data: "DataProto", pipeline_config: RLVRConfig, kl_ctrl: AdaptiveKLController):
-    token_level_rewards = expand_to_token_level(data)
+    token_level_rewards = expand_to_token_level(data, pipeline_config.use_token_level_reward)
     beta = 0
     kld = compute_approx_kl(
         log_probs=data.batch["old_log_probs"],
@@ -559,12 +607,12 @@ def reward_postprocess(data: "DataProto", pipeline_config: RLVRConfig, running_c
         pipeline_config.norm_mean_type, pipeline_config.norm_std_type = "group", "group"
 
     response_level_rewards = reward_norm(
-                    response_level_rewards,
-                    n_sample=pipeline_config.actor_infer.generating_args.num_return_sequences,
-                    running_ctrl=running_ctrl,
-                    norm_mean_type=pipeline_config.norm_mean_type,
-                    norm_std_type=pipeline_config.norm_std_type
-                    )
+        response_level_rewards,
+        n_sample=pipeline_config.actor_infer.generating_args.num_return_sequences,
+        running_ctrl=running_ctrl,
+        norm_mean_type=pipeline_config.norm_mean_type,
+        norm_std_type=pipeline_config.norm_std_type,
+    )
 
     # 对reward进行clip
     if pipeline_config.reward_clip:
@@ -743,7 +791,7 @@ def postprocess_generate(
     eos_token_id,
     pad_token_id,
     fill_eos_token=False,
-    output_logprobs: Optional[list[list[float]]]=None,
+    output_logprobs: Optional[list[list[float]]] = None,
     pad_to_seq_len=True,
 ) -> "DataProto":
     from roll.distributed.scheduler.protocol import DataProto
@@ -796,7 +844,11 @@ def postprocess_generate(
     assert attention_mask.any(dim=1).all(), f"has all 0 attention_mask, {attention_mask} {input_ids}"
     first_one = attention_mask.float().argmax(dim=1)
     new_response_mask = torch.zeros_like(attention_mask)  # response mask for cat input_ids
-    logprobs = torch.zeros([output_batch_size, sequence_length - 1], dtype=torch.float32) if output_logprobs is not None else None
+    logprobs = (
+        torch.zeros([output_batch_size, sequence_length - 1], dtype=torch.float32)
+        if output_logprobs is not None
+        else None
+    )
     for i in range(output_batch_size):
         shift = first_one[i].item()
         if shift > 0:
@@ -808,7 +860,7 @@ def postprocess_generate(
         attention_mask[i][:valid_length] = 1
         attention_mask[i][valid_length:] = 0
         prompt_len = valid_length - response_length
-        new_response_mask[i][prompt_len : valid_length] = 1
+        new_response_mask[i][prompt_len:valid_length] = 1
         if logprobs is not None:
             logprobs[i][prompt_len - 1 : valid_length - 1] = torch.tensor(
                 output_logprobs[i][:response_length], dtype=logprobs.dtype
@@ -871,6 +923,7 @@ def separate_prompt_response(
     prompt_ids = torch.where(prompt_mask, input_ids, torch.full_like(input_ids, pad_id))
     response_ids = torch.where(response_mask_valid, input_ids, torch.full_like(input_ids, pad_id))
     return prompt_ids, response_ids
+
 
 def filter_func_args(func, forward_args):
     signature = inspect.signature(func)

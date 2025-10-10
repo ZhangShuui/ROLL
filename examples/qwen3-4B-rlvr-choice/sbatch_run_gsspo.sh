@@ -6,7 +6,7 @@
 #SBATCH --exclude=dgx-34,dgx-20
 #SBATCH --time=30:00:00
 #SBATCH --account=hdtaccuracy
-#SBATCH --partition=preempt
+#SBATCH --partition=normal
 ##SBATCH --container-writable
 ##SBATCH --container-image /home/szhangfa/containers/roll.img
 ##SBATCH --container-save /home/szhangfa/containers/roll.img
@@ -29,5 +29,5 @@ set -euo pipefail
 
 cd /home/szhangfa/ROLL
 
-bash examples/qwen3-4B-rlvr-choice/run_rlvr_pipeline.sh
+bash examples/qwen3-4B-rlvr-choice/run_gsspo_pipeline.sh
 "

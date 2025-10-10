@@ -18,7 +18,17 @@ from roll.distributed.strategy.factory import create_strategy
 from roll.distributed.strategy.strategy import InferenceStrategy, TrainStrategy
 from roll.models.model_providers import default_reward_model_provider, default_tokenizer_provider
 from roll.utils.context_managers import state_offload_manger
-from math_verify import parse, verify
+
+# from math_verify import parse, verify
+
+
+def parse(expression: str):
+    return expression
+
+
+def verify(gold_answer, exect_answer):
+    return gold_answer == exect_answer
+
 
 class timeout:
     def __init__(self, seconds=1, error_message="Timeout"):
@@ -58,12 +68,9 @@ def hf_verify_math_sample(answer_a, answer_b, timeout_sec=5.0):
     """
     with multiprocessing.Manager() as manager:
         result = manager.list()
-        
-        p = multiprocessing.Process(
-            target=_hf_verify_math_sample,
-            args=(answer_a, answer_b, result)
-        )
-        
+
+        p = multiprocessing.Process(target=_hf_verify_math_sample, args=(answer_a, answer_b, result))
+
         p.start()
         try:
             max_timeout = min(timeout_sec + 1, 10)
@@ -120,13 +127,45 @@ def long_block_penalty_reward_fn(text: str, max_length: int = 100) -> float:
     return reward
 
 
+def normalize_choice(text: str):
+    if not text:
+        return None
+    t_up = (text or "").strip().upper()
+    t_up = re.sub(r"<THINK>.*?</THINK>", " ", t_up, flags=re.DOTALL)
+    t_up = re.sub(r"<[^>]+>", " ", t_up)
+    t_up = re.sub(r"\b(ASSISTANT|SYSTEM|USER)\b", " ", t_up)
+
+    # Extract /choice{A} pattern
+    m = re.search(r"/CHOICE\{([ABCDEFG])\}", t_up)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"([ABCDEFG])\s*$", t_up)
+    if m:
+        return m.group(1)
+    m = re.search(r'(?:^|\s)(?:ANSWER|OPTION|CHOICE)\s*[:\-]?\s*["\'`(]*\b([ABCDEFG])\b', t_up)
+    if m:
+        return m.group(1)
+    m = re.match(r'^\s*["\'`(]*([ABCDEFG])(?:[\).\s]|$)', t_up)
+    if m:
+        return m.group(1)
+    m = re.search(r"\b([ABCDEFG])\b", t_up)
+    if m:
+        return m.group(1)
+    letters = re.findall(r"[ABCDEFG]", t_up)
+    if len(letters) == 1:
+        return letters[0]
+    return None
+
+
 def format_reward_fn(text: str, pattern: Optional[str] = r"^<think>.*?</think>.*?<answer>.*?</answer>$"):
     # pattern = r"^<think>\n.*?\n</think>\n<answer>\n.*?\n</answer>$"
-    if pattern is None:
-        pattern: str = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
-    matche = re.match(pattern, text, re.DOTALL | re.MULTILINE)
-    reward = 0 if matche else -1
-    return reward
+    # if pattern is None:
+    #     pattern: str = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
+    # matche = re.match(pattern, text, re.DOTALL | re.MULTILINE)
+    # reward = 0 if matche else -1
+    # return reward
+    return 0
 
 
 class MathRuleRewardWorker(Worker):
@@ -161,47 +200,51 @@ class MathRuleRewardWorker(Worker):
         format_rewards = []
         # response_text_list = self.tokenizer.batch_decode(data.batch['responses'], skip_special_tokens=True)
         response_text_list = self.tokenizer.batch_decode(data.batch["responses"], skip_special_tokens=False)
-        for response, answer in zip(response_text_list, data.non_tensor_batch["ground_truth"]):
-            # print(f'answer outpus: {outputs}')
-            # verify_answer.append(verify_math_sample(response, answer))
-            response = response.replace("<|endoftext|>", "")
-            response = response.replace("<|im_end|>", "")
-            response = response.replace("<pad>", "")
-            try:
-                with timeout(5):
-                    correct, extracted_response, extracted_ground_truth = hf_verify_math_sample(
-                        response, f"${answer}$"
-                    )
-            except Exception as e:
-                self.logger.error(f"timeout answer: {answer}, response: {response}")
-                correct = False
-                extracted_response = ""
-                extracted_ground_truth = ""
-            # TODO check Answer
-            try:
-                outputs = json.dumps(
-                    {
-                        "correct": correct,
-                        "answer": str(answer),
-                        "extracted_response": str(extracted_response),
-                        "extracted_ground_truth": str(extracted_ground_truth),
-                        "response": str(response),
-                    }
-                )
-                self.logger.debug(f"answer check: {outputs}")
-            except Exception as e:
-                self.logger.error(f"answer check except: {e}")
 
-            if correct:
-                verify_answer.append(1)
+        response_text_list = self.tokenizer.batch_decode(data.batch["responses"], skip_special_tokens=False)
+
+        # for response, answer in zip(response_text_list, data.non_tensor_batch["ground_truth"]):
+        #     # print(f'answer outpus: {outputs}')
+        #     # verify_answer.append(verify_math_sample(response, answer))
+        #     response = response.replace("<|endoftext|>", "")
+        #     response = response.replace("<|im_end|>", "")
+        #     response = response.replace("<pad>", "")
+        #     response = response.strip()
+        #     response = normalize_choice(response) or response
+        #     answer = normalize_choice(answer) or answer
+        #     if correct:
+        #         verify_answer.append(1)
+        #     else:
+        #         verify_answer.append(0)  # other?
+        #     repetition_penalty_rewards.append(self.repetition_penalty_reward_fn(response))
+        #     format_rewards.append(format_reward_fn(response, self.format_pattern))
+        #     long_block_penalty_rewards.append(long_block_penalty_reward_fn(response))
+        for response, answer in zip(response_text_list, data.non_tensor_batch["ground_truth"]):
+            response = (
+                (response or "").replace("<|endoftext|>", "").replace("<|im_end|>", "").replace("<pad>", "").strip()
+            )
+            resp_norm = normalize_choice(response)
+            ans_norm = normalize_choice(answer)
+
+            if resp_norm is None or ans_norm is None:
+                correct = False
+                # extracted_response = resp_norm or ""
+                # extracted_ground_truth = ans_norm or ""
             else:
-                verify_answer.append(0)  # other?
+                # 如不需要多进程校验，直接：
+                correct = resp_norm == ans_norm
+                # extracted_response = resp_norm
+                # extracted_ground_truth = ans_norm
+                # 如果你坚持用多进程外壳：
+                # correct, extracted_response, extracted_ground_truth = hf_verify_math_sample(resp_norm, ans_norm)
+
+            verify_answer.append(1 if correct else 0)
             repetition_penalty_rewards.append(self.repetition_penalty_reward_fn(response))
             format_rewards.append(format_reward_fn(response, self.format_pattern))
             long_block_penalty_rewards.append(long_block_penalty_reward_fn(response))
-            response_length_rewards.append(len(response) / 20000)
+            # response_length_rewards.append(len(response) / 20000)
         token_level_rewards = torch.zeros_like(data.batch["responses"], dtype=torch.float16)
-        response_length_rewards = torch.tensor(response_length_rewards, dtype=torch.float16)
+        # response_length_rewards = torch.tensor(response_length_rewards, dtype=torch.float16)
         # format
         repetition_penalty_rewards = torch.tensor(repetition_penalty_rewards, dtype=torch.float16)
         long_block_penalty_rewards = torch.tensor(long_block_penalty_rewards, dtype=torch.float16)

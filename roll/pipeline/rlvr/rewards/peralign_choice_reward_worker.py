@@ -17,7 +17,7 @@ from roll.models.model_providers import (
 )
 
 QUESTION_FILE = (
-    "/project/hdtaccuracy/Personality-Alignment/choice_ver/" "four_choices_question_v7_hard/all_questions.json"
+    "/project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_enhanced/merged_choice_questions.json"
 )
 # 如果题目里有 choices.score，则按 score/5.0 归一化，否则用 gold 二分类 1/0
 SCORE_NORMALIZE_DENOM = 5.0
@@ -153,24 +153,32 @@ class PerAlignChoiceRewardWorker(Worker):
     def _normalize_choice(text: str):
         if not text:
             return None
-        t = text.strip().upper()
-        # 清理 <THINK> ... </THINK> 以及其它标签
-        t = re.sub(r"<THINK>.*?</THINK>", " ", t, flags=re.DOTALL)
-        t = re.sub(r"<[^>]+>", " ", t)
-        t = re.sub(r"\b(ASSISTANT|SYSTEM|USER)\b", " ", t)
+        t_up = (text or "").strip().upper()
+        t_up = re.sub(r"<THINK>.*?</THINK>", " ", t_up, flags=re.DOTALL)
+        t_up = re.sub(r"<[^>]+>", " ", t_up)
+        t_up = re.sub(r"\b(ASSISTANT|SYSTEM|USER)\b", " ", t_up)
 
-        patterns = [
-            r"([ABCD])\s*$",
-            r'(?:^|\s)(?:ANSWER|OPTION|CHOICE)\s*[:\-]?\s*["\'`(]*\b([ABCD])\b',
-            r'^\s*["\'`(]*([ABCD])(?:[\).\s]|$)',
-            r"\b([ABCD])\b",
-        ]
-        for p in patterns:
-            m = re.search(p, t)
-            if m:
-                return m.group(1)
-        letters = re.findall(r"[ABCD]", t)
-        return letters[0] if len(letters) == 1 else None
+        # Extract /choice{A} pattern
+        m = re.search(r"/CHOICE\{([ABCDEFG])\}", t_up)
+        if m:
+            return m.group(1)
+
+        m = re.search(r"([ABCDEFG])\s*$", t_up)
+        if m:
+            return m.group(1)
+        m = re.search(r'(?:^|\s)(?:ANSWER|OPTION|CHOICE)\s*[:\-]?\s*["\'`(]*\b([ABCDEFG])\b', t_up)
+        if m:
+            return m.group(1)
+        m = re.match(r'^\s*["\'`(]*([ABCDEFG])(?:[\).\s]|$)', t_up)
+        if m:
+            return m.group(1)
+        m = re.search(r"\b([ABCDEFG])\b", t_up)
+        if m:
+            return m.group(1)
+        letters = re.findall(r"[ABCDEFG]", t_up)
+        if len(letters) == 1:
+            return letters[0]
+        return None
 
     def _score_one(self, qid: str, response_text: str):
         bank = self._load_question_bank()

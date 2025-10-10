@@ -16,6 +16,7 @@ class DatasetFilterConfig:
     max_difficulty: Optional[float] = None
     num_samples: int = 0
 
+
 @dataclass
 class RewardFilterConfig:
     type: Literal["no_filter", "mean_filter", "std_filter"] = field(
@@ -30,65 +31,89 @@ class RewardFilterConfig:
 
 @dataclass
 class RewardConfig(WorkerConfig):
-    code_url: str = field(
-        default=None,
-        metadata={"help": "The url of the code."}
-    )
+    code_url: str = field(default=None, metadata={"help": "The url of the code."})
     use_local: bool = field(
-        default=True,
-        metadata={"help": "Whether to use local code instead of downloading from URL."}
+        default=True, metadata={"help": "Whether to use local code instead of downloading from URL."}
     )
-    judge_prompt: str = field(
-        default=None,
-        metadata={"help": "The prompt for judge."}
-    )
-    judge_model_type: str = field(
-        default=None,
-        metadata={"help": "api or inference"}
-    )
-    judge_model_name: str = field(
-        default=None,
-        metadata={"help": "judge_model_name."}
-    )
-    judge_api_url: str = field(
-        default=None,
-        metadata={"help": "judge_api_url."}
-    )
-    judge_api_key: str = field(
-        default=None,
-        metadata={"help": "judge_api_key."}
-    )
-    format_pattern: str = field(
-        default=None,
-        metadata={"help": "The pattern of the answer format."}
-    )
+    judge_prompt: str = field(default=None, metadata={"help": "The prompt for judge."})
+    judge_model_type: str = field(default=None, metadata={"help": "api or inference"})
+    judge_model_name: str = field(default=None, metadata={"help": "judge_model_name."})
+    judge_api_url: str = field(default=None, metadata={"help": "judge_api_url."})
+    judge_api_key: str = field(default=None, metadata={"help": "judge_api_key."})
+    format_pattern: str = field(default=None, metadata={"help": "The pattern of the answer format."})
     reward_type: str = field(default=None, metadata={"help": "The type of the reward."})
-    response_length_penalty_coef: float = field(default=0.0, metadata={"help": "The coefficient of the response length penalty."})
+    response_length_penalty_coef: float = field(
+        default=0.0, metadata={"help": "The coefficient of the response length penalty."}
+    )
+
+    # ===== Token reward (guided) =====
+    sentence_reward_value: float = field(
+        default=0.1, metadata={"help": "Base reward value for each sentence/criterion match."}
+    )
+    overlap_aggregation: str = field(
+        default="max", metadata={"help": "How to aggregate overlapping rewards: 'max' or 'sum'."}
+    )
+    smoothing_radius: int = field(
+        default=0, metadata={"help": "Radius for smoothing token rewards. 0 = no smoothing."}
+    )
+    normalize_mode: str = field(
+        default="none", metadata={"help": "Normalization mode: 'none', 'by_length', or 'by_num_sentences'."}
+    )
+    cap_per_token: float = field(default=1.0, metadata={"help": "Maximum reward value per token."})
+    max_matches_per_sentence: int = field(default=0, metadata={"help": "Maximum matches per sentence. 0 = unlimited."})
+    scale_by_num_criteria: bool = field(
+        default=True, metadata={"help": "Whether to scale reward by number of criteria matched."}
+    )
+
+    # ===== Correctness scaling =====
+    correct_reward_scale: float = field(
+        default=1.0, metadata={"help": "Scale factor for rewards when answer is correct."}
+    )
+    incorrect_reward_scale: float = field(
+        default=0.0, metadata={"help": "Scale factor for rewards when answer is incorrect."}
+    )
+
+    # ===== Step control =====
+    guidance_until_step: int = field(default=5000, metadata={"help": "Step until which guided mode is active."})
+    guidance_blend_span: int = field(
+        default=0, metadata={"help": "Number of steps for blending from guided to default. 0 = no blend."}
+    )
+    default_token_reward_strategy: str = field(
+        default="zero",
+        metadata={"help": "Default phase strategy: 'zero', 'uniform_answer_scaled', or 'uniform_bank_score_scaled'."},
+    )
+    emit_scores_in_default_phase: bool = field(
+        default=False, metadata={"help": "Whether to emit scores in default phase for group advantages."}
+    )
+    bank_score_minmax_norm: bool = field(
+        default=True, metadata={"help": "Whether to normalize bank scores using min-max within each question."}
+    )
+
+    # ===== Compatibility =====
+    return_response_level: bool = field(default=False, metadata={"help": "Whether to return response-level rewards."})
+    return_scores: bool = field(default=False, metadata={"help": "Whether to return scores output."})
 
     tag_included: List[str] = field(default_factory=list, metadata={"help": "The tags of the domain."})
     query_filter_config: RewardFilterConfig = field(
         default_factory=RewardFilterConfig,
-        metadata={"help": "Arguments passed to reward query filtering"},)
+        metadata={"help": "Arguments passed to reward query filtering"},
+    )
     response_filter_config: RewardFilterConfig = field(
         default_factory=RewardFilterConfig,
         metadata={"help": "Arguments passed to reward response filtering"},
     )
 
 
-
 @dataclass
 class RLVRConfig(BaseConfig):
     # global
-    global_template: str = field(
-        default=None,
-        metadata={"help": "The template of the global."})
+    global_template: str = field(default=None, metadata={"help": "The template of the global."})
     dataset_filter: DatasetFilterConfig = field(
         default_factory=DatasetFilterConfig,
         metadata={"help": "Configuration for filtering dataset by source and difficulty"},
     )
     num_return_sequences_in_group: int = field(
-        default=1,
-        metadata={"help": "The number of return sequences in one group, used in generation_args."}
+        default=1, metadata={"help": "The number of return sequences in one group, used in generation_args."}
     )
 
     generate_opt_level: int = field(
@@ -98,59 +123,40 @@ class RLVRConfig(BaseConfig):
         },
     )
     is_num_return_sequences_expand: bool = field(
-        default=False,
-        metadata={"help": "whether replicate `num_return_sequences` times in prompts or not."}
+        default=False, metadata={"help": "whether replicate `num_return_sequences` times in prompts or not."}
     )
-    max_running_requests: int = field(
-        default=128,
-        metadata={"help": "The maximum number of running requests."}
-    )
+    max_running_requests: int = field(default=128, metadata={"help": "The maximum number of running requests."})
     is_use_additional_prompts: bool = field(
-        default=False,
-        metadata={"help": "Whether to use additional prompts or not."}
+        default=False, metadata={"help": "Whether to use additional prompts or not."}
     )
     max_additional_running_prompts: int = field(
         default=16, metadata={"help": "The additional number of running prompts, beyond batch_size."}
     )
-    save_logging_board_dir: str = field(
-        default=None, metadata={"help": "saving directory of logging board_metrics"}
-    )
-    rollout_dump_dir: str = field(
-        default=None, metadata={"help": "saving actor_infer rollout to this dir"}
-    )
+    save_logging_board_dir: str = field(default=None, metadata={"help": "saving directory of logging board_metrics"})
+    rollout_dump_dir: str = field(default=None, metadata={"help": "saving actor_infer rollout to this dir"})
 
     # role related
-    pretrain: str = field(
-        default=None,
-        metadata={"help": "Path to pretrain model directory, if available."})
+    pretrain: str = field(default=None, metadata={"help": "Path to pretrain model directory, if available."})
     reward_pretrain: str = field(
-        default=None,
-        metadata={"help": "Path to pretrain model directory for the reward model, if available."}
+        default=None, metadata={"help": "Path to pretrain model directory for the reward model, if available."}
     )
-    validation: WorkerConfig = field(
-        default=None,
-        metadata={"help": "Configuration for the validation."}
-    )
+    validation: WorkerConfig = field(default=None, metadata={"help": "Configuration for the validation."})
     actor_train: WorkerConfig = field(
-        default_factory=WorkerConfig,
-        metadata={"help": "Configuration for the actor's training role."}
+        default_factory=WorkerConfig, metadata={"help": "Configuration for the actor's training role."}
     )
     actor_infer: WorkerConfig = field(
-        default_factory=WorkerConfig,
-        metadata={"help": "Configuration for the actor's inference role."}
+        default_factory=WorkerConfig, metadata={"help": "Configuration for the actor's inference role."}
     )
     critic: WorkerConfig = field(
-        default_factory=WorkerConfig,
-        metadata={"help": "Configuration for the critic's training role."}
+        default_factory=WorkerConfig, metadata={"help": "Configuration for the critic's training role."}
     )
     reference: WorkerConfig = field(
-        default_factory=WorkerConfig,
-        metadata={"help": "Configuration for the reference role."}
+        default_factory=WorkerConfig, metadata={"help": "Configuration for the reference role."}
     )
     rewards: Optional[Dict[str, RewardConfig]] = field(
-        default_factory=dict,
-        metadata={"help": "Configuration for the multi domain rewards."}
+        default_factory=dict, metadata={"help": "Configuration for the multi domain rewards."}
     )
+    use_token_level_reward: bool = field(default=False, metadata={"help": "Whether to use token level reward or not."})
 
     # PPO related
     ppo_epochs: int = field(default=1, metadata={"help": "Number of optimisation epochs per batch of samples"})
@@ -160,9 +166,13 @@ class RLVRConfig(BaseConfig):
     gamma: float = field(default=1, metadata={"help": "Gamma parameter for advantage calculation"})
     pg_clip: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping in PPO policy gradient loss"})
     use_pg_clip_range: bool = field(default=False, metadata={"help": "Use to change the clipping range of pg_clip"})
-    pg_clip_low: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping lower in PPO policy gradient loss"})
-    pg_clip_high: Optional[float] = field(default=0.2, metadata={"help": "Range for clipping higher in PPO policy gradient loss"})
-    
+    pg_clip_low: Optional[float] = field(
+        default=0.2, metadata={"help": "Range for clipping lower in PPO policy gradient loss"}
+    )
+    pg_clip_high: Optional[float] = field(
+        default=0.2, metadata={"help": "Range for clipping higher in PPO policy gradient loss"}
+    )
+
     value_clip: Optional[float] = field(
         default=None, metadata={"help": "Range for clipping values in loss calculation"}
     )
@@ -170,7 +180,7 @@ class RLVRConfig(BaseConfig):
         default="kl",
         metadata={
             "help": "kl penalty options: 'kl': model_logp - ref_logp, 'abs': abs(kl), 'mse': "
-                    "mean squared error mse(kl) and 'full': the actual kl for all tokens in the distribution"
+            "mean squared error mse(kl) and 'full': the actual kl for all tokens in the distribution"
         },
     )
     target_kl: Optional[float] = field(default=None, metadata={"help": "Target KL value for adaptive KL control"})
@@ -213,31 +223,20 @@ class RLVRConfig(BaseConfig):
     kl_loss_coef: float = field(default=0, metadata={"help": "Loss coefficient for kl loss"})
     entropy_loss_coef: float = field(default=0, metadata={"help": "Loss coefficient for entropy loss"})
     postive_loss_coef: float = field(
-        default=0,
-        metadata={"help": "Loss coefficient for SFT loss, used for positive samples"}
+        default=0, metadata={"help": "Loss coefficient for SFT loss, used for positive samples"}
     )
-    use_topr_neg_loss_coef: float = field(
-        default=0.0,
-        metadata={"help": "Loss coefficient for TOPR Neg loss"}
-    )
-    use_policy_loss_type: Literal["PPO", "PG"] = field(
-        default="PPO",
-        metadata={"help": "whether to use PPO/PG loss"}
-    )
+    use_topr_neg_loss_coef: float = field(default=0.0, metadata={"help": "Loss coefficient for TOPR Neg loss"})
+    use_policy_loss_type: Literal["PPO", "PG"] = field(default="PPO", metadata={"help": "whether to use PPO/PG loss"})
     use_topr_loss: bool = field(
-        default=False,
-        metadata={"help": "whether to use TPRO loss, http://arxiv.org/abs/2503.14286"}
+        default=False, metadata={"help": "whether to use TPRO loss, http://arxiv.org/abs/2503.14286"}
     )
-    rl_loss_coef: float = field(
-        default=1.0,
-        metadata={"help": "Loss coefficient for RL loss"}
-    )
+    rl_loss_coef: float = field(default=1.0, metadata={"help": "Loss coefficient for RL loss"})
     dual_clip_loss: bool = field(default=False, metadata={"help": "Use dual clip loss"})
     loss_agg_mode: Literal["token-mean", "seq-mean-token-sum", "seq-mean-token-mean", "seq-mean-token-sum-norm"] = (
         field(default="seq-mean-token-mean", metadata={"help": "Loss aggregation mode"})
     )
-    importance_sampling: Literal["token", "seq"] = (
-        field(default="token", metadata={"help": "policy importance sampling"})
+    importance_sampling: Literal["token", "seq"] = field(
+        default="token", metadata={"help": "policy importance sampling"}
     )
     val_greedy: bool = field(default=False, metadata={"help": "Use greedy for validation"})
     val_n_sample: int = field(default=1, metadata={"help": "Number of samples for validation"})
@@ -255,9 +254,9 @@ class RLVRConfig(BaseConfig):
         super().__post_init__()
 
         if (
-                self.actor_train.model_args.model_name_or_path is None
-                or self.actor_infer.model_args.model_name_or_path
-                or self.reference.model_args.model_name_or_path is None
+            self.actor_train.model_args.model_name_or_path is None
+            or self.actor_infer.model_args.model_name_or_path
+            or self.reference.model_args.model_name_or_path is None
         ):
             self.actor_train.model_args.model_name_or_path = self.pretrain
             self.actor_infer.model_args.model_name_or_path = self.pretrain
@@ -319,24 +318,24 @@ class RLVRConfig(BaseConfig):
 
     def set_max_steps(self, max_steps: int):
         actor_backward_batch_size = (
-                self.actor_train.training_args.per_device_train_batch_size
-                * self.actor_train.training_args.gradient_accumulation_steps
+            self.actor_train.training_args.per_device_train_batch_size
+            * self.actor_train.training_args.gradient_accumulation_steps
         )
         critic_backward_batch_size = (
-                self.critic.training_args.per_device_train_batch_size
-                * self.critic.training_args.gradient_accumulation_steps
+            self.critic.training_args.per_device_train_batch_size
+            * self.critic.training_args.gradient_accumulation_steps
         )
         # 没有除dp_size，需要在分布式环境初始化后再除
         self.actor_train.training_args.max_steps = max_steps * (
-                self.rollout_batch_size
-                * self.actor_infer.generating_args.num_return_sequences
-                * self.ppo_epochs
-                // actor_backward_batch_size
+            self.rollout_batch_size
+            * self.actor_infer.generating_args.num_return_sequences
+            * self.ppo_epochs
+            // actor_backward_batch_size
         )
         self.critic.training_args.max_steps = max_steps * (
-                self.rollout_batch_size
-                * self.actor_infer.generating_args.num_return_sequences
-                // critic_backward_batch_size
+            self.rollout_batch_size
+            * self.actor_infer.generating_args.num_return_sequences
+            // critic_backward_batch_size
         )
 
         logger.info(f"pipeline max_steps: {self.max_steps} to {max_steps}")

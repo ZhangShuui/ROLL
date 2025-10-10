@@ -110,7 +110,75 @@ BASE_CHAT_FORMAT = (
     "User: {{content}} Assistant:"
 )
 
+PERALIGN_GSSPO_PROMPT_NO_THINK = """
+You are an evaluator for a next-turn prediction task.
+
+GOAL
+Given a PERSONA (profile), a multi-turn DIALOGUE, a list of OPTIONS (candidate next utterances), and a MODEL_OUTPUT that contains hidden thinking plus the final chosen option, you will:
+1) Identify the selected option and extract its text.
+2) Ignore any content inside <THINK>...</THINK>.
+3) Score how well EACH SENTENCE in the selected option aligns with the persona and dialogue using the criteria below.
+4) Also provide response-level criterion scores.
+5) Return ONLY a single JSON object (no extra text).
+
+CRITERIA (0–1 each; 1 = excellent)
+[1] Persona Consistency — Matches the given profile’s values/preferences/background; no contradictions of the persona’s prior self-claims.
+[2] Conversational Coherence & Next-Turn Plausibility — Natural continuation given the last turns; no contradictions or non sequiturs.
+[3] Tone & Style Match — Register, slang, verbosity, and politeness consistent with how this person would speak/write.
+[4] Contextual Specificity & Grounding — Uses concrete details from the dialogue rather than generic filler.
+[5] Affective & Stance Alignment — Emotions and opinions fit the persona and context.
+[6] Safety & Non-harm / Non-stereotyping — No harmful/toxic/privately identifying or prejudicial content. (This acts as a penalty in sentence scoring.)
+[7] Format Faithfulness (response-level) — Exactly one option from the provided list is selected; no fabricated option text.
+
+SENTENCE SCORE (for each visible sentence in the selected option):
+Compute:
+  sentence_score = 0.35*C1 + 0.35*C2 + 0.10*C3 + 0.10*C4 + 0.10*C5 – penalty
+  where penalty = 0 if C6 ≥ 0.9 else min(0.5, 0.5*(1 - C6)).
+Clamp to [0,1].
+Attach the list of criterion IDs that the sentence most strongly evidences (subset of {1,2,3,4,5}). If feasible, add a "char_span": [start, end] over the MODEL_OUTPUT string; otherwise omit it.
+
+OUTPUT FORMAT (JSON only):
+{
+  "criteria": [
+    {"id": 1, "name": "Persona Consistency", "score": 0-1},
+    {"id": 2, "name": "Conversational Coherence & Next-Turn Plausibility", "score": 0-1},
+    {"id": 3, "name": "Tone & Style Match", "score": 0-1},
+    {"id": 4, "name": "Contextual Specificity & Grounding", "score": 0-1},
+    {"id": 5, "name": "Affective & Stance Alignment", "score": 0-1},
+    {"id": 6, "name": "Safety & Non-harm / Non-stereotyping", "score": 0-1},
+    {"id": 7, "name": "Format Faithfulness", "score": 0-1}
+  ],
+  "sentences": [
+    {"text": "…first sentence of the selected option…", "score": 0-1, "criteria": [1,2,4], "char_span": [start,end]},
+    {"text": "…second sentence…", "score": 0-1, "criteria": [1,3,5]}
+  ],
+  "explanation": "Brief, one-paragraph justification referencing the persona and recent turns.",
+  "selected_option": {"label": "A", "text": "…exact text from the provided options…"}
+}
+
+INSTRUCTIONS
+- PERSONA: treat as ground truth. Do not stereotype beyond what is stated.
+- DIALOGUE: weigh the last 3–5 turns most heavily for next-turn plausibility.
+- OPTIONS: only sentences from the selected option are to be scored.
+- MODEL_OUTPUT: treat text inside <THINK>…</THINK> as hidden thinking and ignore it for sentence scoring.
+- Return only the JSON object. No markdown, no prose before or after.
+END.
+
+PERSONA:
+{{PROFILE}}
+
+DIALOGUE:
+{{DIALOGUE}}
+
+OPTIONS:
+{{OPTIONS}}
+
+MODEL_OUTPUT:
+{{MODEL_RESPONSE}}
+"""
+
 prompt_maps = {
     "Qwen2.5-7B-Instruct-RLVR-prompt": Qwen2_5_7B_Instruct_RLVR_Prompt,
     "PERALIGN-RLVR-prompt": QWEN3_8B_PERALIGN_RLVR_PROMPT_NO_THINK,
+    "PERALIGN-GSSPO-PROMPT-NO-THINK": PERALIGN_GSSPO_PROMPT_NO_THINK,
 }

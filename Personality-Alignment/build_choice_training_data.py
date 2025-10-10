@@ -43,6 +43,43 @@ PROMPT_TEMPLATES = {
 GENERATION_MESSAGE = PROMPT_TEMPLATES["no_think"]
 
 
+def deduplicate_questions_by_qid(questions: List[dict]) -> List[dict]:
+    """
+    去除重复qid的问题，保留最后出现的
+    """
+    seen_qids = {}
+    deduplicated = []
+    duplicates_count = 0
+
+    for i, question in enumerate(questions):
+        qid = str(question.get("qid", "")).strip()
+
+        if not qid:
+            # 没有qid的直接保留
+            deduplicated.append(question)
+            continue
+
+        if qid in seen_qids:
+            # 发现重复，记录并替换
+            duplicates_count += 1
+            print(f"发现重复qid: '{qid}' (索引 {seen_qids[qid]} -> {i})")
+            # 替换之前的记录
+            deduplicated[seen_qids[qid]] = question
+        else:
+            # 第一次出现
+            seen_qids[qid] = len(deduplicated)
+            deduplicated.append(question)
+
+    if duplicates_count > 0:
+        print(f"总共发现 {duplicates_count} 个重复的qid，已去重")
+        print(f"去重前: {len(questions)} 个问题")
+        print(f"去重后: {len(deduplicated)} 个问题")
+    else:
+        print("没有发现重复的qid")
+
+    return deduplicated
+
+
 def load_tokenizer(model_name: str = "Qwen/Qwen2.5-7B-Instruct"):
     """Load tokenizer for token counting"""
     if not TOKENIZER_AVAILABLE:
@@ -706,6 +743,84 @@ def analyze_dataset_stats(questions: List[dict]) -> dict:
     }
 
 
+def filter_long_prompts(
+    train_items: List[dict],
+    val_items: List[dict],
+    test_items: List[dict],
+    tokenizer,
+    max_prompt_tokens: int = 1024,
+    batch_size: int = 32,
+) -> Tuple[List[dict], List[dict], List[dict], dict]:
+    """
+    过滤掉训练集和验证集中 prompt token 数大于 max_prompt_tokens 的数据，
+    将它们移到测试集中。
+
+    返回: (new_train_items, new_val_items, new_test_items, filter_stats)
+    """
+    if not tokenizer:
+        print("Warning: No tokenizer available for prompt length filtering", file=sys.stderr)
+        return train_items, val_items, test_items, {}
+
+    stats = {"train_filtered": 0, "val_filtered": 0, "train_kept": 0, "val_kept": 0, "moved_to_test": 0}
+
+    new_train_items = []
+    new_val_items = []
+    moved_items = []
+
+    print(f"Filtering training set items with prompt tokens > {max_prompt_tokens}...")
+    if train_items:
+        # 批量计算训练集的 token 数
+        train_messages_list = [item.get("messages", []) for item in train_items]
+        train_token_counts = batch_count_tokens(tokenizer, train_messages_list, batch_size=batch_size)
+
+        for item, token_count in zip(train_items, train_token_counts):
+            if token_count > max_prompt_tokens:
+                item["moved_from"] = "train"
+                item["prompt_tokens"] = token_count
+                moved_items.append(item)
+                stats["train_filtered"] += 1
+            else:
+                new_train_items.append(item)
+                stats["train_kept"] += 1
+
+    print(f"Filtering validation set items with prompt tokens > {max_prompt_tokens}...")
+    if val_items:
+        # 批量计算验证集的 token 数
+        val_messages_list = [item.get("messages", []) for item in val_items]
+        val_token_counts = batch_count_tokens(tokenizer, val_messages_list, batch_size=batch_size)
+
+        for item, token_count in zip(val_items, val_token_counts):
+            if token_count > max_prompt_tokens:
+                item["moved_from"] = "val"
+                item["prompt_tokens"] = token_count
+                moved_items.append(item)
+                stats["val_filtered"] += 1
+            else:
+                new_val_items.append(item)
+                stats["val_kept"] += 1
+
+    # 将过滤出的项目添加到测试集
+    new_test_items = test_items + moved_items
+    stats["moved_to_test"] = len(moved_items)
+
+    return new_train_items, new_val_items, new_test_items, stats
+
+
+def print_filter_stats(stats: dict, max_tokens: int):
+    """打印过滤统计信息"""
+    if not stats:
+        return
+
+    print(f"\n=== Prompt Length Filtering (max_tokens: {max_tokens}) ===")
+    print(f"Training set:")
+    print(f"  Kept: {stats.get('train_kept', 0)}")
+    print(f"  Filtered: {stats.get('train_filtered', 0)}")
+    print(f"Validation set:")
+    print(f"  Kept: {stats.get('val_kept', 0)}")
+    print(f"  Filtered: {stats.get('val_filtered', 0)}")
+    print(f"Total moved to test set: {stats.get('moved_to_test', 0)}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build {qid, messages, output} dataset for multi-choice QA using all existing options per question (2-7 choices)."
@@ -754,6 +869,17 @@ def main():
         default=-1,
         help="End index for processing questions (exclusive, -1 means process until end)",
     )
+    parser.add_argument(
+        "--filter_long_prompts",
+        action="store_true",
+        help="Filter out training/validation items with prompt tokens > max_prompt_tokens, move to test set",
+    )
+    parser.add_argument(
+        "--max_prompt_tokens",
+        type=int,
+        default=1024,
+        help="Maximum prompt tokens for training/validation sets (default: 1024)",
+    )
 
     args = parser.parse_args()
 
@@ -761,8 +887,12 @@ def main():
     random.seed(args.seed)
 
     questions = load_questions(args.questions)
-    prompts_map = load_prompts(args.prompts)
 
+    # 添加qid去重逻辑
+    print("检查并去除重复qid...")
+    questions = deduplicate_questions_by_qid(questions)
+
+    prompts_map = load_prompts(args.prompts)
     # Apply index range filtering
     total_questions = len(questions)
     start_idx = max(0, args.start_index)
@@ -776,17 +906,26 @@ def main():
     questions = questions[start_idx:end_idx]
     print(f"Processing questions {start_idx} to {end_idx-1} (total: {len(questions)} out of {original_total})")
 
-    # Load tokenizer if token stats requested
+    # Load tokenizer if token stats requested or prompt filtering enabled
     tokenizer = None
-    if args.show_token_stats:
+    if args.show_token_stats or args.filter_long_prompts:
         if not TOKENIZER_AVAILABLE:
-            print("ERROR: Cannot show token statistics - transformers library not available!")
-            print("Please install transformers: pip install transformers")
-            sys.exit(1)
+            if args.filter_long_prompts:
+                print("ERROR: Cannot filter long prompts - transformers library not available!")
+                print("Please install transformers: pip install transformers")
+                sys.exit(1)
+            else:
+                print("ERROR: Cannot show token statistics - transformers library not available!")
+                print("Please install transformers: pip install transformers")
+                sys.exit(1)
         print(f"Loading tokenizer: {args.tokenizer_model}")
         tokenizer = load_tokenizer(args.tokenizer_model)
         if not tokenizer:
-            print("ERROR: Failed to load tokenizer! Token statistics will be disabled.")
+            if args.filter_long_prompts:
+                print("ERROR: Failed to load tokenizer! Cannot filter long prompts.")
+                sys.exit(1)
+            else:
+                print("ERROR: Failed to load tokenizer! Token statistics will be disabled.")
         else:
             print("Tokenizer loaded successfully!")
 
@@ -899,6 +1038,8 @@ def main():
     if args.split_mode == "none":
         if args.make_val:
             print("WARNING: --make_val ignored when split_mode=none (no test set).")
+        if args.filter_long_prompts:
+            print("WARNING: --filter_long_prompts ignored when split_mode=none (no train/val/test split).")
         export_dataset(items, args.out)
         print(f"Built {len(items)} items from range {start_idx}-{end_idx-1} -> {args.out}")
     else:
@@ -917,6 +1058,20 @@ def main():
                     val_items, te = split_validation(
                         te, val_ratio=args.val_ratio, seed=args.seed + i, balance_test_tag=False
                     )
+
+                # Apply prompt length filtering if requested
+                if args.filter_long_prompts and tokenizer:
+                    tr, val_items, te, filter_stats = filter_long_prompts(
+                        tr,
+                        val_items,
+                        te,
+                        tokenizer,
+                        max_prompt_tokens=args.max_prompt_tokens,
+                        batch_size=args.batch_size,
+                    )
+                    print(f"Fold {i} - Prompt length filtering results:")
+                    print_filter_stats(filter_stats, args.max_prompt_tokens)
+
                 fold_dir = os.path.join(base_out, f"fold_{i}")
                 os.makedirs(fold_dir, exist_ok=True)
                 export_dataset(tr, os.path.join(fold_dir, "train.jsonl"))
@@ -938,6 +1093,28 @@ def main():
                 seed=args.seed,
             )
 
+        # Handle validation split
+        val_items: List[dict] = []
+        if args.make_val:
+            balance = args.split_mode == "user_partial"
+            val_items, test_items = split_validation(
+                test_items, val_ratio=args.val_ratio, seed=args.seed, balance_test_tag=balance
+            )
+
+        # Apply prompt length filtering if requested
+        filter_stats = {}
+        if args.filter_long_prompts and tokenizer:
+            print(f"\nApplying prompt length filtering (max_tokens: {args.max_prompt_tokens})...")
+            train_items, val_items, test_items, filter_stats = filter_long_prompts(
+                train_items,
+                val_items,
+                test_items,
+                tokenizer,
+                max_prompt_tokens=args.max_prompt_tokens,
+                batch_size=args.batch_size,
+            )
+            print_filter_stats(filter_stats, args.max_prompt_tokens)
+
         if args.show_token_stats and tokenizer:
             if train_items:
                 print("\n" + "=" * 50)
@@ -953,12 +1130,15 @@ def main():
                 test_token_stats = analyze_token_stats(tokenizer, test_items, batch_size=args.batch_size)
                 if test_token_stats:
                     print_token_stats(test_token_stats, args.prompt_type)
+            if val_items:
+                print("\n" + "=" * 50)
+                print(f"VALIDATION SET TOKEN STATISTICS (Range {start_idx}-{end_idx-1})")
+                print("=" * 50)
+                val_token_stats = analyze_token_stats(tokenizer, val_items, batch_size=args.batch_size)
+                if val_token_stats:
+                    print_token_stats(val_token_stats, args.prompt_type)
 
         if args.make_val:
-            balance = args.split_mode == "user_partial"
-            val_items, test_items = split_validation(
-                test_items, val_ratio=args.val_ratio, seed=args.seed, balance_test_tag=balance
-            )
             train_out, val_out, test_out = derive_split_paths_with_val(args.out)
             export_dataset(train_items, train_out)
             export_dataset(val_items, val_out)
@@ -990,6 +1170,9 @@ def main():
 
     print(f"\nGenerated dataset with prompt type: {args.prompt_type}")
     print(f"Processed questions from index {start_idx} to {end_idx-1}")
+
+    if filter_stats and args.filter_long_prompts:
+        print(f"Applied prompt length filtering with max_prompt_tokens={args.max_prompt_tokens}")
 
 
 if __name__ == "__main__":
