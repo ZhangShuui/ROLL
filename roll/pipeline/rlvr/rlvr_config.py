@@ -88,6 +88,12 @@ class RewardConfig(WorkerConfig):
     bank_score_minmax_norm: bool = field(
         default=True, metadata={"help": "Whether to normalize bank scores using min-max within each question."}
     )
+    allow_negative_scores: bool = field(
+        default=True, metadata={"help": "Whether to allow negative rewards after scaling and normalization."}
+    )
+    judge_score_target: str = field(
+        default="both", metadata={"help": "Target for judge scores: 'both', 'correct', or 'incorrect'."}
+    )
 
     # ===== Compatibility =====
     return_response_level: bool = field(default=False, metadata={"help": "Whether to return response-level rewards."})

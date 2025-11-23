@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=hdtgrpo
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=8
+#SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --exclude=dgx-34,dgx-20
 #SBATCH --time=30:00:00
@@ -23,5 +23,5 @@ set -euo pipefail
 
 cd /home/szhangfa/ROLL
 # python3 -m pip install -r requirements_torch260_vllm.txt
-bash examples/qwen3-1.7B-rlvr-choice/run_gsspo_pipeline.sh
+bash examples/qwen3-1.7B-rlvr-choice/run_gsspo_seq_pipeline.sh
 "

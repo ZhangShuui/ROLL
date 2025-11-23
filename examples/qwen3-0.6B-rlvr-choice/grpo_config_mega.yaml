@@ -1,10 +1,8 @@
 # ---------- rlvr_config_ds_lora.yaml ----------
 # ① 继承 DeepSpeed 预设
 defaults:
-  - ../config/deepspeed_zero@_here_
+  # - ../config/deepspeed_zero@_here_
   - ../config/deepspeed_zero2@_here_
-  - ../config/deepspeed_zero3@_here_
-  - ../config/deepspeed_zero3_cpuoffload@_here_
 
 hydra:
   run:
@@ -12,26 +10,25 @@ hydra:
   output_subdir: null
 
 # ========= 基础信息 =========
-exp_name: "qwen3-1-7B-rlvr-exact-h800-8gpu"
+exp_name: "qwen3-0-6B-rlvr-exact-h800-8gpu"
 seed: 42
-logging_dir: /project/hdtaccuracy/trains/gspo/qwen3_1_7b_choice_v5/logs
-output_dir: /project/hdtaccuracy/trains/gspo/qwen3_1_7b_choice_v5/output
-num_gpus_per_node: 4      # 8×H800
+logging_dir: /project/hdtaccuracy/trains/gspo/qwen3_0_6b_choice_v4/logs
+output_dir: /project/hdtaccuracy/trains/gspo/qwen3_0_6b_choice_v4/output
+num_gpus_per_node: 8      # 8×H800
 # num_gpus_per_node: 4      # 2×H800
 
 track_with: wandb
 tracker_kwargs:
  api_key: dce12064d30900b2cc538f73e82997de5aafbb96
+ name: qwen3-0.6b-grpo-exact-4gpu
  project: roll_peralign
  notes: roll_peralign
- name: qwen3-1.7b-gspo-4gpu
  tags:
    - rlvr
    - baseline
   
-
 # ========= 训练控制 =========
-max_steps: 450
+max_steps: 400
 save_steps: 50
 logging_steps: 1
 # eval_steps: 50
@@ -41,7 +38,6 @@ resume_from_checkpoint: false
 rollout_batch_size: 64
 prompt_length: 1024
 response_length: 2048
-importance_sampling: seq
 num_return_sequences_in_group: 8
 ppo_epochs: 1
 adv_estimator: "grpo"
@@ -52,19 +48,18 @@ reward_normalize: true
 advantage_clip: 2.0
 whiten_advantages: true
 
-
 use_kl_loss: true
 kl_loss_coef: 0.001
 loss_agg_mode: "seq-mean-token-mean"
 
 # ========= 预训练权重 =========
-pretrain: /project/hdtaccuracy/models/base/Qwen3-1.7B
+pretrain: /project/hdtaccuracy/models/base/Qwen3-0.6B
 # reward_pretrain: /project/hdtaccuracy/models/base/Qwen3-8B            # critic 初始权重
 validation:
   data_args:
     template: qwen3
     file_name:
-      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v11/train_data_with_thinking/roll/val.json
+      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_with_thinking/roll/val.json
     max_samples: 100
   generating_args:
     do_sample: True
@@ -136,7 +131,7 @@ actor_train:
       use_distributed_optimizer: true
       bf16: true
 
-  device_mapping: "[0, 1, 2, 3]"             # 与原先保持一致
+  device_mapping: "[0, 1, 2, 3, 4 ,5, 6, 7]"             # 与原先保持一致
   # device_mapping: "[0, 1]"
   # infer_batch_size: 8
 
@@ -164,8 +159,8 @@ actor_infer:
       block_size: 16
       max_model_len: 3072
   num_gpus_per_worker: 1
-  # device_mapping: "[6,7]"                     # GPU4
-  device_mapping: "[0, 1]"
+  device_mapping: "[6,7]"                     # GPU4
+  # device_mapping: "[0, 1]"
   infer_batch_size: 2
 
 # ========= Reference =========
@@ -182,7 +177,7 @@ reference:
       tensor_model_parallel_size: 1
       pipeline_model_parallel_size: 1
   # device_mapping: "[6, 7]"                    # GPU5
-  device_mapping: "[2, 3]"
+  device_mapping: "[0, 1]"
   infer_batch_size: 2
 
 # ========= Reward =========

@@ -51,6 +51,14 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
         self.judge_api_url = getattr(self.worker_config, "judge_api_url", None)
         self.judge_api_key = getattr(self.worker_config, "judge_api_key", None)
 
+        # ===== New options =====
+        # 是否允许负分（-1 指明显违规/反面证据），否则只 - 0/1
+        self.allow_negative_scores = bool(getattr(self.worker_config, "allow_negative_scores", True))
+        # judge_score_target: "both"|"correct"|"incorrect" - 决定只对哪些样本调用 judge
+        self.judge_score_target = getattr(self.worker_config, "judge_score_target", "both")
+        # batch-level normalization: None|'minmax'|'zscore'
+        self.batch_score_normalization = getattr(self.worker_config, "batch_score_normalization", None)
+
         # ===== Token reward (guided) =====
         self.sentence_reward_base = float(getattr(self.worker_config, "sentence_reward_value", 0.1))
         self.overlap_aggregation = getattr(self.worker_config, "overlap_aggregation", "sum")  # 'max'|'sum'
@@ -255,6 +263,8 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
                 co_str = f"{correct_label}" + (f": {correct_text}" if correct_text else "")
             if not correct_text:
                 self.logger.warning(f"Missing correct_text for correct_label={correct_label}")
+            # NOTE: allow negative scores. Judge should output -1/0/1 for each criterion:
+            # -1 => explicit violation (penalize), 0 => none, 1 => positive evidence
             formatted_prompt = f"""
     You are an evaluator for a next-turn prediction task.
 
@@ -272,7 +282,7 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
     4) Consider ALL text in MODEL_OUTPUT including reasoning in <THINK> tags
     5) Output valid JSON only, no additional text
 
-    CRITERIA (binary 0/1 evaluation)
+    CRITERIA (can be -1/0/1)
     [1] Persona Consistency: Does the response maintain the character's personality, values, and behavioral patterns?
     [2] Conversational Coherence: Is the response contextually appropriate and follows naturally from the dialogue?
     [3] Tone & Style Match: Does the response match the expected communication style and emotional tone?
@@ -282,11 +292,11 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
     OUTPUT FORMAT (JSON only):
     {{
     "criteria": [
-        {{"id": 1, "score": 0 or 1, "sentences": [ "Exact sentence from MODEL_OUTPUT", "Another sentence", ... ]}},
-        {{"id": 2, "score": 0 or 1, "sentences": [ ... ]}},
-        {{"id": 3, "score": 0 or 1, "sentences": [ ... ]}},
-        {{"id": 4, "score": 0 or 1, "sentences": [ ... ]}},
-        {{"id": 5, "score": 0 or 1, "sentences": [ ... ]}}
+        {{"id": 1, "score": -1, 0 or 1, "sentences": [ "Exact sentence from MODEL_OUTPUT", "Another sentence", ... ]}},
+        {{"id": 2, "score": -1. 0 or 1, "sentences": [ ... ]}},
+        {{"id": 3, "score": -1, 0 or 1, "sentences": [ ... ]}},
+        {{"id": 4, "score": -1, 0 or 1, "sentences": [ ... ]}},
+        {{"id": 5, "score": -1, 0 or 1, "sentences": [ ... ]}}
     ],
     "explanation": "Optional brief explanation"
     }}
@@ -454,11 +464,15 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
                 # 匹配单独的字段
                 # 提取 id
                 id_match = re.search(r'"id":\s*(\d+)', line)
-                score_match = re.search(r'"score":\s*([01])', line)
+                score_match = re.search(r'"score":\s*(-?\d+\.?\d*)', line)
 
                 if id_match and score_match:
                     criterion_id = int(id_match.group(1))
-                    criterion_score = self._normalize_score(int(score_match.group(1)))
+                    try:
+                        s_val = float(score_match.group(1))
+                    except Exception:
+                        s_val = 0.0
+                    criterion_score = self._normalize_score(s_val)
 
                     # 查找sentences
                     sentences_match = re.search(r'"sentences":\s*\[(.*?)\]', line)
@@ -480,10 +494,13 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
                     continue
 
                 # 尝试单独提取分数信息
-                score_only_match = re.search(r'"score":\s*([01])', line)
+                score_only_match = re.search(r'"score":\s*(-?\d+\.?\d*)', line)
                 if score_only_match and not criteria:
                     # 如果还没有criteria，创建一个基础的
-                    score = self._normalize_score(int(score_only_match.group(1)))
+                    try:
+                        score = self._normalize_score(float(score_only_match.group(1)))
+                    except Exception:
+                        score = 0
                     criterion = {"id": 1, "score": score, "sentences": ["ALL"] if score == 1 else []}
                     criteria.append(criterion)
 
@@ -500,10 +517,13 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
             if not criteria:
                 self.logger.warning("No criteria found in line parsing, creating default fallback")
                 # 尝试查找任何数字作为分数
-                numbers = re.findall(r"\b[01]\b", llm_response)
+                numbers = re.findall(r"-?\d+\.?\d*", llm_response)
                 if numbers:
                     for i, num in enumerate(numbers[:5]):  # 最多5个criteria
-                        score = self._normalize_score(int(num))
+                        try:
+                            score = self._normalize_score(float(num))
+                        except Exception:
+                            score = 0
                         criterion = {"id": i + 1, "score": score, "sentences": ["ALL"] if score == 1 else []}
                         criteria.append(criterion)
 
@@ -534,7 +554,14 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
         """标准化分数为0或1"""
         try:
             score_val = float(score)
-            return 1 if score_val >= 0.5 else 0
+            if score_val <= -0.5:
+                if self.allow_negative_scores:
+                    return -1
+                else:
+                    return 0
+            elif score_val >= 0.5:
+                return 1
+            return 0
         except (TypeError, ValueError, AttributeError):
             return 0
 
@@ -939,7 +966,7 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
             # 获取该criterion的权重
             weight = criterion_weights.get(criterion_id, 0.2)  # 默认权重0.2
 
-            # 标准化分数到0-1
+            # 标准化分数到-1 - 1
             normalized_score = float(self._normalize_score(score))
 
             total_weighted_score += normalized_score * weight
@@ -951,14 +978,15 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
         else:
             weighted_avg = 0.0
 
-        return max(0.0, min(0.5, weighted_avg * 0.5))  # 确保在[0,0.5]范围内
+        # 支持负分：weighted_avg 可能在 [-1,1], 映射到 [-0.5,0.5]
+        raw = float(weighted_avg)
+        return max(-1, min(1, raw)) if self.allow_negative_scores else max(0, min(1, raw))
 
     def _compute_rewards_impl(self, data: DataProto, metrics: Dict):
-        # 当前全局 step（来自上游 meta_info）
         global_step = int(data.meta_info.get("global_step", 0))
 
         # 解码
-        resp_token_batch = data.batch["responses"]  # [B, T]
+        resp_token_batch = data.batch["responses"]
         prompts_text_list = self.tokenizer.batch_decode(data.batch["prompts"], skip_special_tokens=True)
         decoded_responses = self.tokenizer.batch_decode(resp_token_batch, skip_special_tokens=True)
 
@@ -977,7 +1005,7 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
 
         bank = self._load_question_bank()
 
-        # 计算 alpha（guided 权重）
+        # ===== 计算 alpha =====
         if global_step < self.guidance_until_step:
             alpha = 1.0
         elif self.guidance_blend_span > 0 and global_step < self.guidance_until_step + self.guidance_blend_span:
@@ -986,16 +1014,18 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
         else:
             alpha = 0.0
 
+        # ✅ 关键: 提前判断是否需要LLM judge (包含 blend 阶段!)
+        need_llm_judge = alpha > 0.0
+
         device = resp_token_batch.device
         B, T = resp_token_batch.size(0), resp_token_batch.size(1)
         token_level_rewards = torch.zeros_like(resp_token_batch, dtype=torch.float16, device=device)
         response_level_rewards = torch.zeros(B, dtype=torch.float16, device=device)
-        # 可选在默认期输出 scores（给组内相对优势）
         out_scores = torch.zeros(B, dtype=torch.float16, device=device) if self.emit_scores_in_default_phase else None
 
-        # 预处理：收集所有样本的基础信息，并检查是否包含答案
+        # ===== 预处理 =====
         sample_info = []
-        samples_with_answers = []  # 只包含有答案的样本，用于LLM judge
+        samples_with_answers = []
         no_answer_count = 0
 
         for i, (qid, prompt_txt, response_txt) in enumerate(zip(qids, prompts_text_list, decoded_responses)):
@@ -1005,7 +1035,6 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
             correct_text = choice_texts.get(gold) if gold else None
             pred = self._normalize_choice(response_txt)
 
-            # 检查是否有答案输出
             has_answer = pred is not None
             if not has_answer:
                 no_answer_count += 1
@@ -1029,103 +1058,196 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
 
             sample_info.append(info)
 
-            # 只有包含答案的样本才需要LLM judge
-            if has_answer:
-                samples_with_answers.append(info)
+            # ✅ 修复: 应用 judge_score_target 过滤
+            if need_llm_judge and has_answer:
+                # 根据 judge_score_target 决定是否需要判断
+                should_judge = False
+                if self.judge_score_target == "both":
+                    should_judge = True
+                elif self.judge_score_target == "correct":
+                    should_judge = bool(is_correct)
+                elif self.judge_score_target == "incorrect":
+                    should_judge = not bool(is_correct)
+                else:
+                    # 默认行为: both
+                    should_judge = True
 
-        # 记录统计信息
+                if should_judge:
+                    samples_with_answers.append(info)
+
+        # 统计
         metrics["answer_check/total_samples"] = float(len(sample_info))
         metrics["answer_check/no_answer_count"] = float(no_answer_count)
-        metrics["answer_check/has_answer_count"] = float(len(samples_with_answers))
+        metrics["answer_check/has_answer_count"] = float(len(samples_with_answers)) if need_llm_judge else 0.0
         metrics["answer_check/no_answer_ratio"] = float(no_answer_count) / max(1, len(sample_info))
 
-        # ===== Batch processing for guided path =====
-        if alpha > 0.0 and samples_with_answers:
-            # 只对有答案的样本进行批量LLM判断
+        # ===== Guided阶段: LLM判断 (✅ 只调用一次!) =====
+        # apply judge_target filter when collecting samples_with_answers earlier
+        if need_llm_judge and samples_with_answers:
+            self.logger.info(
+                f"[REWARD DEBUG] GUIDED PHASE (alpha={alpha:.3f}): "
+                f"Starting LLM judge for {len(samples_with_answers)} samples"
+            )
+
+            # ✅ 只调用一次!
             batch_criteria_results = self._get_batch_llm_judgment(samples_with_answers)
 
-            # 创建索引映射，将结果映射回原始sample_info
+            valid_results = sum(1 for r in batch_criteria_results if r and not r.get("_compat_fallback", False))
+            fallback_results = sum(1 for r in batch_criteria_results if r and r.get("_compat_fallback", False))
+            self.logger.info(f"[REWARD DEBUG] LLM results - Valid: {valid_results}, Fallback: {fallback_results}")
+
+            # 创建索引映射
             answer_sample_to_result = {}
             for info, criteria_result in zip(samples_with_answers, batch_criteria_results):
                 answer_sample_to_result[info["index"]] = criteria_result
 
-            # 为每个样本计算guided tokens
+            # ===== compute weighted raw scores for batch and optionally normalize across batch =====
+            raw_scores = []
+            for r in batch_criteria_results:
+                if r is None:
+                    raw_scores.append(0.0)
+                else:
+                    raw_scores.append(self._compute_weighted_llm_score(r))
+
+            # batch normalization
+            norm_scores = raw_scores
+            if self.batch_score_normalization in ("minmax", "min-max", "min_max"):
+                import numpy as _np
+
+                arr = _np.array(raw_scores, dtype=_np.float32)
+                mn, mx = float(arr.min()), float(arr.max())
+                if mx > mn:
+                    # map to [0, 2]
+                    norm_scores = (2.0 * (arr - mn) / (mx - mn)).tolist()
+                else:
+                    norm_scores = [1.0 for _ in raw_scores]  # 中点
+            elif self.batch_score_normalization in ("zscore", "z-score"):
+                import numpy as _np
+
+                arr = _np.array(raw_scores, dtype=_np.float32)
+                mu, sd = float(arr.mean()), float(arr.std())
+                if sd > 1e-6:
+                    # map to approximately [0, 2] via tanh, centered at 1.0
+                    norm_scores = (1.0 + _np.tanh((arr - mu) / sd)).tolist()
+                else:
+                    norm_scores = [1.0 for _ in raw_scores]  # 中点
+
+            # 将最终分数回写到每个 result，保持原始值也存下
+            for idx, r in enumerate(batch_criteria_results):
+                if r is None:
+                    continue
+                r["llm_weighted_raw"] = raw_scores[idx]
+                r["llm_weighted_score"] = float(norm_scores[idx])
+
+            # 计算guided tokens
             for info in sample_info:
                 i = info["index"]
 
                 if info["has_answer"] and i in answer_sample_to_result:
-                    # 有答案且有LLM判断结果
                     criteria_result = answer_sample_to_result[i]
                     sentence_items = criteria_result.get("sentences", [])
                     answer_scale = self.correct_reward_scale if info["is_correct"] else self.incorrect_reward_scale
+
                     guided_tokens = self._compute_guided_token_rewards(
                         resp_token_batch[i], sentence_items, info["response_txt"], answer_scale, metrics
                     )
 
-                    # 计算加权LLM评分
-                    llm_weighted_score = self._compute_weighted_llm_score(criteria_result)
-                    info["llm_weighted_score"] = llm_weighted_score
-
+                    # 使用已经归一化后的分数（若未归一化，_get_batch_llm_judgment 之后会有 raw -> score）
+                    info["llm_weighted_score"] = float(
+                        criteria_result.get("llm_weighted_score", criteria_result.get("llm_weighted_raw", 0.0))
+                    )
                 else:
-                    # 没有答案，给默认的错误reward
-                    default_error_scale = self.incorrect_reward_scale
-                    guided_tokens = self._compute_default_error_token_rewards(resp_token_batch[i], default_error_scale)
-                    info["llm_weighted_score"] = 0.0  # 没有答案的情况LLM评分为0
+                    # ✅ 没有答案: guided给零 (会在混合时被default替代)
+                    guided_tokens = torch.zeros(T, dtype=torch.float16, device=device)
+                    info["llm_weighted_score"] = 0.0
 
                 info["guided_tokens"] = guided_tokens
         else:
-            # 如果不需要guided path，设置空的guided_tokens
+            # ✅ Pure default阶段: 跳过LLM judge
+            self.logger.info(
+                f"[REWARD DEBUG] DEFAULT PHASE (alpha={alpha:.3f}): "
+                f"Skipping LLM judge, strategy={self.default_token_reward_strategy}"
+            )
+
             for info in sample_info:
                 info["guided_tokens"] = torch.zeros(T, dtype=torch.float16, device=device)
-                info["llm_weighted_score"] = 0.0  # 非guided阶段LLM评分为0
+                info["llm_weighted_score"] = 0.0
 
-        # ===== Batch processing for default path and final blending =====
-        # 收集LLM评分统计
+        # ===== Default path & 最终混合 =====
         llm_scores = []
 
         for info in sample_info:
             i = info["index"]
 
+            # ✅ 总是计算default tokens (作为backup)
             if info["has_answer"]:
-                # 有答案的情况，正常处理
                 answer_scale = self.correct_reward_scale if info["is_correct"] else self.incorrect_reward_scale
-                # 计算default tokens
                 default_tokens = self._compute_default_token_rewards(
                     response_tokens_1d=resp_token_batch[i],
                     answer_scale=answer_scale,
                     bank_norm_score=info["bank_norm_score"],
                 )
             else:
-                # 没有答案的情况，给错误的default tokens
-                default_error_scale = self.incorrect_reward_scale
-                default_tokens = self._compute_default_error_token_rewards(resp_token_batch[i], default_error_scale)
+                default_tokens = self._compute_default_error_token_rewards(
+                    resp_token_batch[i], self.incorrect_reward_scale
+                )
 
-            # 混合guided和default
+            # ✅ 修复: 平滑混合 (避免跳跃)
             guided_tokens = info["guided_tokens"]
+
             if alpha >= 1.0:
+                # 纯 guided
                 final_tokens = guided_tokens
+                blend_type = "100\% guided"
             elif alpha <= 0.0:
+                # 纯 default
                 final_tokens = default_tokens
+                blend_type = "100\% default"
             else:
-                # 线性插值
+                # ✅ 关键修复: 确保平滑过渡
                 final_tokens = (
                     alpha * guided_tokens.to(torch.float32) + (1.0 - alpha) * default_tokens.to(torch.float32)
                 ).to(torch.float16)
+                blend_type = f"{alpha*100:.1f}% guided + {(1-alpha)*100:.1f}% default"
 
             token_level_rewards[i] = final_tokens
 
-            # 计算response-level reward
-            # 可以基于LLM加权评分、正确性等多种因素
+            # ✅ Response-level: 也使用平滑插值
             llm_score = info.get("llm_weighted_score", 0.0)
-            correctness_bonus = 1.0 if info["is_correct"] else 0.0  # 正确性奖励
 
-            # 综合response-level reward
-            response_reward = float(llm_score) + correctness_bonus
+            # Guided response reward (基于LLM score + correctness)
+            if info["is_correct"]:
+                guided_response_reward = 1.0 + llm_score  # [1.0, 1.5]
+            else:
+                guided_response_reward = 0.0 + llm_score  # [0.0, 0.5]
+
+            # Default response reward (仅基于correctness或bank_score)
+            if info["has_answer"]:
+                if self.default_token_reward_strategy == "uniform_bank_score_scaled":
+                    # 使用bank_score归一化到[0,1]
+                    default_response_reward = float(info["bank_norm_score"])
+                else:
+                    # 使用correctness: correct=1.0, incorrect=0.0
+                    default_response_reward = 1.0 if info["is_correct"] else 0.0
+            else:
+                # 没有答案: 给0
+                default_response_reward = 0.0
+
+            # ✅ 平滑插值
+            if alpha >= 1.0:
+                # 纯guided
+                response_reward = guided_response_reward
+            elif alpha <= 0.0:
+                # 纯default
+                response_reward = default_response_reward
+            else:
+                # 混合: alpha * guided + (1-alpha) * default
+                response_reward = alpha * guided_response_reward + (1.0 - alpha) * default_response_reward
+
             response_level_rewards[i] = response_reward
-
             llm_scores.append(llm_score)
 
-            # 收集默认期 scores（可选）
+            # Scores (for GRPO)
             if self.emit_scores_in_default_phase:
                 if info["has_answer"]:
                     score_val = (
@@ -1134,22 +1256,31 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
                         else float(info["is_correct"])
                     )
                 else:
-                    # 没有答案的情况给0分
                     score_val = 0.0
                 out_scores[i] = float(score_val)
 
-        # 添加LLM评分统计到metrics
-        if llm_scores:
+            # ✅ 增强日志: 显示guided/default/final的值
+            if i < 3:
+                self.logger.info(
+                    f"[REWARD BLEND] Sample {i}: {blend_type}, "
+                    f"Has answer: {info['has_answer']}, Correct: {info['is_correct']}, "
+                    f"Token mean: {final_tokens.mean().item():.6f}, "
+                    f"Response - Guided: {guided_response_reward:.6f}, "
+                    f"Default: {default_response_reward:.6f}, "
+                    f"Final: {response_reward:.6f}"
+                )
+
+        # ===== Metrics =====
+        if need_llm_judge and llm_scores:
             metrics["llm_score/mean"] = float(np.mean(llm_scores))
             metrics["llm_score/std"] = float(np.std(llm_scores))
             metrics["llm_score/min"] = float(np.min(llm_scores))
             metrics["llm_score/max"] = float(np.max(llm_scores))
             metrics["llm_score/non_zero_count"] = float(sum(1 for s in llm_scores if s > 0))
-            metrics["llm_score/non_zero_ratio"] = float(sum(1 for s in llm_scores if s > 0)) / len(llm_scores)
+            metrics["llm_score/non_zero_ratio"] = float(sum(1 for s in llm_scores if s > 0)) / max(1, len(llm_scores))
 
         tensors = {"token_level_rewards": token_level_rewards}
 
-        # 添加response_level_rewards到输出
         if self.return_response_level:
             tensors["response_level_rewards"] = response_level_rewards
 
@@ -1159,89 +1290,54 @@ class PerAlignChoiceSpecificSentenceRewardWorker(Worker):
         if self.return_scores and "scores" in data.batch and not self.emit_scores_in_default_phase:
             tensors["scores"] = data.batch["scores"]
 
-        # ===== 增强的日志 =====
-
-        # 1. 阶段信息
+        # ===== 增强日志 =====
+        self.logger.info(f"[REWARD DEBUG] ========== SUMMARY ==========")
         self.logger.info(f"[REWARD DEBUG] Global step: {global_step}, Alpha: {alpha:.3f}")
-        self.logger.info(f"[REWARD DEBUG] Phase: {'GUIDED' if alpha > 0 else 'DEFAULT'}")
-        self.logger.info(f"[REWARD DEBUG] Strategy: {self.default_token_reward_strategy}")
+        self.logger.info(f"[REWARD DEBUG] Phase: {'GUIDED/BLEND' if alpha > 0 else 'PURE DEFAULT'}")
+        self.logger.info(f"[REWARD DEBUG] Default strategy: {self.default_token_reward_strategy}")
+        self.logger.info(
+            f"[REWARD DEBUG] Total samples: {len(sample_info)}, With answers: {len(sample_info) - no_answer_count}"
+        )
 
-        # 2. 样本统计
-        self.logger.info(f"[REWARD DEBUG] Total samples: {len(sample_info)}")
-        self.logger.info(f"[REWARD DEBUG] Samples with answers: {len(samples_with_answers)}")
-        self.logger.info(f"[REWARD DEBUG] No answer ratio: {no_answer_count}/{len(sample_info)}")
+        if need_llm_judge:
+            self.logger.info(f"[REWARD DEBUG] LLM judge: {len(samples_with_answers)} samples")
+        else:
+            self.logger.info(f"[REWARD DEBUG] LLM judge: SKIPPED")
 
-        # 3. LLM Judge阶段详细日志
-        if alpha > 0.0 and samples_with_answers:
-            self.logger.info(f"[REWARD DEBUG] Starting LLM judge for {len(samples_with_answers)} samples")
+        # Token统计
+        total_nonzero = (token_level_rewards > 0).sum().item()
+        total_tokens = token_level_rewards.numel()
+        metrics["reward_debug/total_token_coverage"] = total_nonzero / max(1, total_tokens)
 
-            try:
-                batch_criteria_results = self._get_batch_llm_judgment(samples_with_answers)
+        self.logger.info(
+            f"[REWARD DEBUG] Token coverage: {total_nonzero}/{total_tokens} "
+            f"({total_nonzero/max(1,total_tokens)*100:.1f}%)"
+        )
 
-                # 统计LLM结果
-                valid_results = sum(1 for r in batch_criteria_results if r and not r.get("_compat_fallback", False))
-                fallback_results = sum(1 for r in batch_criteria_results if r and r.get("_compat_fallback", False))
-
-                self.logger.info(f"[REWARD DEBUG] LLM results - Valid: {valid_results}, Fallback: {fallback_results}")
-
-                # 详细记录前3个样本的结果
-                for idx, (info, result) in enumerate(zip(samples_with_answers[:3], batch_criteria_results[:3])):
-                    self.logger.info(f"[REWARD DEBUG] Sample {idx}:")
-                    self.logger.info(f"  QID: {info['qid']}, Correct: {info['is_correct']}")
-                    self.logger.info(f"  Criteria count: {len(result.get('criteria', []))}")
-                    self.logger.info(f"  Sentence count: {len(result.get('sentences', []))}")
-                    # self.logger.info(f"  LLM response preview: {result.get('llm_response', '')[:200]}")
-
-            except Exception as e:
-                self.logger.error(f"[REWARD DEBUG] LLM judge failed: {e}", exc_info=True)
-                batch_criteria_results = [self._create_fallback_result(str(e)) for _ in samples_with_answers]
-
-        # 4. Token reward计算日志
-        total_nonzero_tokens = 0
-        total_tokens = 0
-
-        for info in sample_info:
-            i = info["index"]
-            tokens = token_level_rewards[i]
-            nonzero = (tokens > 0).sum().item()
-            total = tokens.numel()
-
-            total_nonzero_tokens += nonzero
-            total_tokens += total
-
-            # 记录前3个样本
-            if i < 3:
-                self.logger.info(f"[REWARD DEBUG] Sample {i} token rewards:")
-                self.logger.info(f"  Nonzero tokens: {nonzero}/{total} ({nonzero/max(1,total)*100:.1f}%)")
-                self.logger.info(f"  Mean reward: {tokens.mean().item():.6f}")
-                self.logger.info(f"  Max reward: {tokens.max().item():.6f}")
-
-        metrics["reward_debug/total_token_coverage"] = total_nonzero_tokens / max(1, total_tokens)
-
-        # 5. Response-level reward统计
+        # Response-level统计
         nonzero_responses = (response_level_rewards > 0).sum().item()
         self.logger.info(f"[REWARD DEBUG] Response rewards - Nonzero: {nonzero_responses}/{B}")
-        self.logger.info(f"[REWARD DEBUG] Response reward mean: {response_level_rewards.mean().item():.6f}")
+        self.logger.info(f"[REWARD DEBUG] Response mean: {response_level_rewards.mean().item():.6f}")
 
-        # 6. 正确vs错误样本的reward对比
+        # 正确vs错误对比
         correct_indices = [i for i, info in enumerate(sample_info) if info["is_correct"]]
         incorrect_indices = [i for i, info in enumerate(sample_info) if not info["is_correct"]]
 
         if correct_indices:
             correct_rewards = response_level_rewards[correct_indices]
             self.logger.info(
-                f"[REWARD DEBUG] Correct samples ({len(correct_indices)}): "
-                f"mean={correct_rewards.mean().item():.6f}, "
-                f"max={correct_rewards.max().item():.6f}"
+                f"[REWARD DEBUG] Correct ({len(correct_indices)}): "
+                f"mean={correct_rewards.mean().item():.6f}, max={correct_rewards.max().item():.6f}"
             )
 
         if incorrect_indices:
             incorrect_rewards = response_level_rewards[incorrect_indices]
             self.logger.info(
-                f"[REWARD DEBUG] Incorrect samples ({len(incorrect_indices)}): "
-                f"mean={incorrect_rewards.mean().item():.6f}, "
-                f"max={incorrect_rewards.max().item():.6f}"
+                f"[REWARD DEBUG] Incorrect ({len(incorrect_indices)}): "
+                f"mean={incorrect_rewards.mean().item():.6f}, max={incorrect_rewards.max().item():.6f}"
             )
+
+        self.logger.info(f"[REWARD DEBUG] ==========================================")
 
         output = DataProto.from_dict(tensors=tensors)
         output.meta_info = {"metrics": metrics}

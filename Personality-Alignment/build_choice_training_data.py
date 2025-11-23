@@ -6,6 +6,7 @@ import sys
 import random
 import re
 from typing import Dict, List, Tuple, Optional
+import hashlib
 
 try:
     from transformers import AutoTokenizer
@@ -806,6 +807,66 @@ def filter_long_prompts(
     return new_train_items, new_val_items, new_test_items, stats
 
 
+def filter_short_prompts(
+    items: List[dict],
+    tokenizer,
+    min_prompt_tokens: int = 256,
+    batch_size: int = 32,
+) -> Tuple[List[dict], dict]:
+    """
+    过滤掉 prompt token 数小于 min_prompt_tokens 的数据(直接丢弃)。
+
+    返回: (filtered_items, filter_stats)
+    """
+    if not tokenizer:
+        print("Warning: No tokenizer available for prompt length filtering", file=sys.stderr)
+        return items, {}
+
+    stats = {
+        "total": len(items),
+        "filtered_out": 0,
+        "kept": 0,
+    }
+
+    if not items:
+        return items, stats
+
+    print(f"Filtering items with prompt tokens < {min_prompt_tokens}...")
+
+    # 批量计算 token 数
+    messages_list = [item.get("messages", []) for item in items]
+    token_counts = batch_count_tokens(tokenizer, messages_list, batch_size=batch_size)
+
+    filtered_items = []
+    for item, token_count in zip(items, token_counts):
+        if token_count < min_prompt_tokens:
+            stats["filtered_out"] += 1
+        else:
+            filtered_items.append(item)
+            stats["kept"] += 1
+
+    print(
+        f"Short prompt filtering: kept {stats['kept']}/{stats['total']} items, "
+        f"filtered out {stats['filtered_out']} items"
+    )
+
+    return filtered_items, stats
+
+
+def print_short_filter_stats(stats: dict, min_tokens: int):
+    """打印短 prompt 过滤统计信息"""
+    if not stats:
+        return
+
+    print(f"\n=== Short Prompt Filtering (min_tokens: {min_tokens}) ===")
+    print(f"Total items: {stats.get('total', 0)}")
+    print(f"Kept: {stats.get('kept', 0)}")
+    print(f"Filtered out: {stats.get('filtered_out', 0)}")
+    if stats.get("total", 0) > 0:
+        filter_rate = stats.get("filtered_out", 0) / stats.get("total", 0) * 100
+        print(f"Filter rate: {filter_rate:.1f}%")
+
+
 def print_filter_stats(stats: dict, max_tokens: int):
     """打印过滤统计信息"""
     if not stats:
@@ -819,6 +880,250 @@ def print_filter_stats(stats: dict, max_tokens: int):
     print(f"  Kept: {stats.get('val_kept', 0)}")
     print(f"  Filtered: {stats.get('val_filtered', 0)}")
     print(f"Total moved to test set: {stats.get('moved_to_test', 0)}")
+
+
+def filter_short_choices(
+    items: List[dict],
+    tokenizer,
+    min_choice_tokens: int = 4,
+    batch_size: int = 64,
+) -> Tuple[List[dict], dict]:
+    """
+    过滤掉任意选项 token 数小于 min_choice_tokens 的题目(直接丢弃)。
+
+    Args:
+        items: 题目列表
+        tokenizer: tokenizer
+        min_choice_tokens: 最小选项token数 (默认4)
+        batch_size: 批处理大小
+
+    返回: (filtered_items, filter_stats)
+    """
+    if not tokenizer:
+        print("Warning: No tokenizer available for choice length filtering", file=sys.stderr)
+        return items, {}
+
+    stats = {
+        "total": len(items),
+        "filtered_out": 0,
+        "kept": 0,
+        "total_choices_checked": 0,
+        "short_choices_found": 0,
+    }
+
+    if not items:
+        return items, stats
+
+    print(f"Filtering items with any choice having tokens < {min_choice_tokens}...")
+
+    # 收集所有选项文本
+    all_choice_texts = []
+    item_choice_indices = []  # 记录每个item的选项在all_choice_texts中的索引范围
+
+    start_idx = 0
+    for item in items:
+        choices = item.get("choices", [])
+        num_choices = len(choices)
+
+        for choice in choices:
+            choice_text = choice.get("text", "").strip()
+            all_choice_texts.append(choice_text)
+
+        item_choice_indices.append((start_idx, start_idx + num_choices))
+        start_idx += num_choices
+
+    # 批量计算所有选项的token数
+    print(f"Batch processing {len(all_choice_texts)} choice texts...")
+    choice_token_counts = batch_count_output_tokens(tokenizer, all_choice_texts, batch_size=batch_size)
+
+    # 检查每个item的选项
+    filtered_items = []
+    for item, (start, end) in zip(items, item_choice_indices):
+        item_token_counts = choice_token_counts[start:end]
+        choices = item.get("choices", [])
+
+        stats["total_choices_checked"] += len(item_token_counts)
+
+        # 检查是否有选项token数过短
+        has_short_choice = False
+        short_choices_info = []
+
+        for choice, token_count in zip(choices, item_token_counts):
+            if token_count < min_choice_tokens:
+                has_short_choice = True
+                stats["short_choices_found"] += 1
+                short_choices_info.append(
+                    {
+                        "label": choice.get("label", "?"),
+                        "text": (
+                            choice.get("text", "")[:50] + "..."
+                            if len(choice.get("text", "")) > 50
+                            else choice.get("text", "")
+                        ),
+                        "tokens": token_count,
+                    }
+                )
+
+        if has_short_choice:
+            stats["filtered_out"] += 1
+            # 可选: 打印被过滤的题目信息
+            if len(short_choices_info) <= 3:  # 只打印前几个，避免刷屏
+                qid = item.get("qid", "unknown")
+                print(f"  Filtered qid={qid}: {len(short_choices_info)} short choice(s)")
+                for info in short_choices_info:
+                    print(f"    - Choice {info['label']}: {info['tokens']} tokens, text: {info['text']}")
+        else:
+            filtered_items.append(item)
+            stats["kept"] += 1
+
+    print(
+        f"Choice length filtering: kept {stats['kept']}/{stats['total']} items, "
+        f"filtered out {stats['filtered_out']} items"
+    )
+    print(
+        f"  Total choices checked: {stats['total_choices_checked']}, "
+        f"short choices found: {stats['short_choices_found']}"
+    )
+
+    return filtered_items, stats
+
+
+def print_choice_filter_stats(stats: dict, min_tokens: int):
+    """打印选项长度过滤统计信息"""
+    if not stats:
+        return
+
+    print(f"\n=== Choice Length Filtering (min_tokens: {min_tokens}) ===")
+    print(f"Total items: {stats.get('total', 0)}")
+    print(f"Kept: {stats.get('kept', 0)}")
+    print(f"Filtered out: {stats.get('filtered_out', 0)}")
+    print(f"Total choices checked: {stats.get('total_choices_checked', 0)}")
+    print(f"Short choices found: {stats.get('short_choices_found', 0)}")
+
+    if stats.get("total", 0) > 0:
+        filter_rate = stats.get("filtered_out", 0) / stats.get("total", 0) * 100
+        print(f"Filter rate: {filter_rate:.1f}%")
+
+    if stats.get("total_choices_checked", 0) > 0:
+        short_choice_rate = stats.get("short_choices_found", 0) / stats.get("total_choices_checked", 0) * 100
+        print(f"Short choice rate: {short_choice_rate:.1f}%")
+
+
+def compute_item_hash(item: dict, hash_fields: List[str] = None) -> str:
+    """
+    计算 item 的 MD5 哈希值
+
+    Args:
+        item: 数据项
+        hash_fields: 用于计算哈希的字段列表。默认使用 ["messages", "output"]
+
+    Returns:
+        MD5 哈希值的十六进制字符串
+    """
+    if hash_fields is None:
+        # 默认基于 messages 和 output 计算哈希
+        hash_fields = ["messages", "output"]
+
+    # 提取用于哈希的数据
+    hash_data = {}
+    for field in hash_fields:
+        if field in item:
+            hash_data[field] = item[field]
+
+    # 转换为稳定的 JSON 字符串 (排序键以确保一致性)
+    json_str = json.dumps(hash_data, ensure_ascii=False, sort_keys=True)
+
+    # 计算 MD5
+    md5_hash = hashlib.md5(json_str.encode("utf-8")).hexdigest()
+
+    return md5_hash
+
+
+def deduplicate_items_by_hash(
+    items: List[dict],
+    hash_fields: List[str] = None,
+    keep: str = "first",
+) -> Tuple[List[dict], dict]:
+    """
+    基于 MD5 哈希去重 items
+
+    Args:
+        items: 数据项列表
+        hash_fields: 用于计算哈希的字段列表
+        keep: 保留策略 - "first" (保留第一个) 或 "last" (保留最后一个)
+
+    Returns:
+        (deduplicated_items, stats)
+    """
+    if not items:
+        return items, {"total": 0, "unique": 0, "duplicates": 0}
+
+    stats = {
+        "total": len(items),
+        "unique": 0,
+        "duplicates": 0,
+        "hash_collisions": {},  # 记录每个哈希值出现的次数
+    }
+
+    print(f"Computing MD5 hashes for {len(items)} items...")
+    print(f"Hash fields: {hash_fields or ['messages', 'output']}")
+
+    # 计算所有 item 的哈希值
+    item_hashes = []
+    for i, item in enumerate(items):
+        item_hash = compute_item_hash(item, hash_fields)
+        item_hashes.append((i, item_hash, item))
+
+        # 记录哈希值出现次数
+        stats["hash_collisions"][item_hash] = stats["hash_collisions"].get(item_hash, 0) + 1
+
+    # 找出重复的哈希值
+    duplicate_hashes = {h: count for h, count in stats["hash_collisions"].items() if count > 1}
+    stats["duplicates"] = sum(count - 1 for count in duplicate_hashes.values())
+
+    if duplicate_hashes:
+        print(f"Found {len(duplicate_hashes)} unique duplicate patterns:")
+        # 只显示前 5 个重复最多的
+        top_duplicates = sorted(duplicate_hashes.items(), key=lambda x: x[1], reverse=True)[:5]
+        for hash_val, count in top_duplicates:
+            print(f"  Hash {hash_val[:12]}... appears {count} times")
+
+    # 去重
+    seen_hashes = {}
+    deduplicated = []
+
+    for idx, item_hash, item in item_hashes:
+        if item_hash not in seen_hashes:
+            # 第一次见到这个哈希值
+            seen_hashes[item_hash] = len(deduplicated)
+            deduplicated.append(item)
+        elif keep == "last":
+            # 保留最后一个：替换之前的
+            deduplicated[seen_hashes[item_hash]] = item
+
+    stats["unique"] = len(deduplicated)
+
+    print(
+        f"MD5 deduplication: kept {stats['unique']}/{stats['total']} items, "
+        f"removed {stats['duplicates']} duplicates"
+    )
+
+    return deduplicated, stats
+
+
+def print_dedup_stats(stats: dict):
+    """打印去重统计信息"""
+    if not stats:
+        return
+
+    print(f"\n=== MD5 Deduplication Statistics ===")
+    print(f"Total items: {stats.get('total', 0)}")
+    print(f"Unique items: {stats.get('unique', 0)}")
+    print(f"Duplicates removed: {stats.get('duplicates', 0)}")
+
+    if stats.get("total", 0) > 0:
+        dup_rate = stats.get("duplicates", 0) / stats.get("total", 0) * 100
+        print(f"Duplication rate: {dup_rate:.1f}%")
 
 
 def main():
@@ -881,6 +1186,48 @@ def main():
         help="Maximum prompt tokens for training/validation sets (default: 1024)",
     )
 
+    parser.add_argument(
+        "--filter_short_prompts",
+        action="store_true",
+        help="Filter out items with prompt tokens < min_prompt_tokens (drop completely)",
+    )
+    parser.add_argument(
+        "--min_prompt_tokens",
+        type=int,
+        default=256,
+        help="Minimum prompt tokens to keep (default: 256)",
+    )
+
+    # ===== 新增参数 =====
+    parser.add_argument(
+        "--filter_short_choices",
+        action="store_true",
+        help="Filter out items with any choice having tokens < min_choice_tokens (drop completely)",
+    )
+    parser.add_argument(
+        "--min_choice_tokens",
+        type=int,
+        default=4,
+        help="Minimum choice tokens to keep (default: 4)",
+    )
+    parser.add_argument(
+        "--deduplicate_md5",
+        action="store_true",
+        help="Remove duplicate items based on MD5 hash of messages and output",
+    )
+    parser.add_argument(
+        "--dedup_hash_fields",
+        nargs="+",
+        default=["messages", "output"],
+        help="Fields to use for MD5 hash computation (default: messages output)",
+    )
+    parser.add_argument(
+        "--dedup_keep",
+        choices=["first", "last"],
+        default="first",
+        help="Which duplicate to keep - first or last occurrence (default: first)",
+    )
+
     args = parser.parse_args()
 
     # Set random seed
@@ -908,10 +1255,12 @@ def main():
 
     # Load tokenizer if token stats requested or prompt filtering enabled
     tokenizer = None
-    if args.show_token_stats or args.filter_long_prompts:
+    if (
+        args.show_token_stats or args.filter_long_prompts or args.filter_short_prompts or args.filter_short_choices
+    ):  # ✅ 添加条件
         if not TOKENIZER_AVAILABLE:
-            if args.filter_long_prompts:
-                print("ERROR: Cannot filter long prompts - transformers library not available!")
+            if args.filter_long_prompts or args.filter_short_prompts or args.filter_short_choices:  # ✅ 更新条件
+                print("ERROR: Cannot filter - transformers library not available!")
                 print("Please install transformers: pip install transformers")
                 sys.exit(1)
             else:
@@ -921,8 +1270,8 @@ def main():
         print(f"Loading tokenizer: {args.tokenizer_model}")
         tokenizer = load_tokenizer(args.tokenizer_model)
         if not tokenizer:
-            if args.filter_long_prompts:
-                print("ERROR: Failed to load tokenizer! Cannot filter long prompts.")
+            if args.filter_long_prompts or args.filter_short_prompts or args.filter_short_choices:  # ✅ 更新条件
+                print("ERROR: Failed to load tokenizer! Cannot filter.")
                 sys.exit(1)
             else:
                 print("ERROR: Failed to load tokenizer! Token statistics will be disabled.")
@@ -1011,6 +1360,62 @@ def main():
         if args.max_items and len(items) >= args.max_items:
             print(f"Reached max_items limit ({args.max_items}), stopping at index {actual_idx}")
             break
+
+    # ===== 在这里添加短 prompt 过滤 (在所有split之前!) =====
+    short_filter_stats = {}
+    if args.filter_short_prompts:
+        if not tokenizer:
+            print("ERROR: Cannot filter short prompts - tokenizer not loaded!")
+            print("Please ensure tokenizer is available (use --show_token_stats or --filter_long_prompts to enable)")
+            sys.exit(1)
+
+        print(f"\nApplying short prompt filtering (min_tokens: {args.min_prompt_tokens})...")
+        items, short_filter_stats = filter_short_prompts(
+            items,
+            tokenizer,
+            min_prompt_tokens=args.min_prompt_tokens,
+            batch_size=args.batch_size,
+        )
+        print_short_filter_stats(short_filter_stats, args.min_prompt_tokens)
+
+        if not items:
+            print("ERROR: All items were filtered out by short prompt filtering!")
+            sys.exit(1)
+
+    choice_filter_stats = {}
+    if args.filter_short_choices:
+        if not tokenizer:
+            print("ERROR: Cannot filter short choices - tokenizer not loaded!")
+            print("Please ensure tokenizer is available")
+            sys.exit(1)
+
+        print(f"\nApplying short choice filtering (min_tokens: {args.min_choice_tokens})...")
+        items, choice_filter_stats = filter_short_choices(
+            items,
+            tokenizer,
+            min_choice_tokens=args.min_choice_tokens,
+            batch_size=args.batch_size,
+        )
+        print_choice_filter_stats(choice_filter_stats, args.min_choice_tokens)
+
+        if not items:
+            print("ERROR: All items were filtered out by short choice filtering!")
+            sys.exit(1)
+
+    # ===== 新增: MD5 去重 (在所有过滤之后，split 之前) =====
+    dedup_stats = {}
+    if args.deduplicate_md5:
+        print(f"\nApplying MD5 deduplication...")
+        items, dedup_stats = deduplicate_items_by_hash(
+            items,
+            hash_fields=args.dedup_hash_fields,
+            keep=args.dedup_keep,
+        )
+        print_dedup_stats(dedup_stats)
+
+        if not items:
+            print("ERROR: All items were removed by MD5 deduplication!")
+            sys.exit(1)
 
     # Update output filename to include range if not full dataset
     if start_idx != 0 or end_idx != original_total:

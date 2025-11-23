@@ -14,18 +14,20 @@ hydra:
   output_subdir: null
 
 # ========= 基础信息 =========
-exp_name: "qwen3-4B-rlvr-gspo-h800-8gpu"
+exp_name: "qwen3-4B-rlvr-grpo-h800-8gpu"
 seed: 42
-logging_dir: /project/hdtaccuracy/trains/gsspo/qwen3_4b_choice_seq/logs
-output_dir: /project/hdtaccuracy/trains/gsspo/qwen3_4b_choice_seq/output
-num_gpus_per_node: 8      # 8×H800
-# num_gpus_per_node: 4      # 2×H800
+logging_dir: /project/hdtaccuracy/trains/grpo/qwen3_4b_choice_v4/logs
+output_dir: /project/hdtaccuracy/trains/grpo/qwen3_4b_choice_v4/output
+# num_gpus_per_node: 8      # 8×H800
+num_gpus_per_node: 4      # 4×H800
 
 track_with: wandb
 tracker_kwargs:
  api_key: dce12064d30900b2cc538f73e82997de5aafbb96
  project: roll_peralign
  notes: roll_peralign
+ name: qwen3-4B-rlvr-grpo-h800-8gpu
+ 
  tags:
    - rlvr
    - baseline
@@ -35,14 +37,13 @@ tracker_kwargs:
 max_steps: 400
 save_steps: 50
 logging_steps: 1
-eval_steps: 50
+# eval_steps: 50
 resume_from_checkpoint: false
 
 # ========= RL 超参 =========
 rollout_batch_size: 64
 prompt_length: 1024
 response_length: 2048
-importance_sampling: seq
 num_return_sequences_in_group: 8
 ppo_epochs: 1
 adv_estimator: "grpo"
@@ -66,7 +67,7 @@ validation:
   data_args:
     template: qwen3
     file_name:
-      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_with_thinking/roll/val.json
+      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v11/train_data_with_thinking/roll/val.json
     max_samples: 100
   generating_args:
     do_sample: True
@@ -93,7 +94,7 @@ actor_train:
     learning_rate: 1.0e-6    # LoRA 常用 1e-4–1e-3
     weight_decay: 0.0
     per_device_train_batch_size: 8   # ZeRO-3 显存足够可翻倍
-    gradient_accumulation_steps: 32  # 2×16 ≈ 原来 1×32
+    gradient_accumulation_steps: 16  # 2×16 ≈ 原来 1×32
     warmup_steps: 0
     num_train_epochs: 5
     max_samples: 9000
@@ -138,7 +139,7 @@ actor_train:
       use_distributed_optimizer: true
       bf16: true
 
-  device_mapping: "[0, 1, 2, 3, 4 ,5, 6, 7]"             # 与原先保持一致
+  device_mapping: "[0, 1, 2, 3]"             # 与原先保持一致
   # device_mapping: "[0, 1]"
   # infer_batch_size: 8
 
@@ -191,69 +192,14 @@ reference:
 rewards:
   # vl pipeline support MathRuleRewardWorker only, at present.
   # Support for rewards in other domains will be retained for future implementation.
-  # math_rule:
-  #   worker_cls: roll.pipeline.rlvr.rewards.math_rule_reward_worker.MathRuleRewardWorker
-  #   model_args:
-  #     model_name_or_path: ${pretrain}
-  #   data_args:
-  #     template: qwen2-vl
-  #   strategy_args:
-  #     strategy_name: hf_infer
-  #     strategy_config: ~
-  #   world_size: 8
-  #   infer_batch_size: 32
   math_rule:
-      worker_cls: roll.pipeline.rlvr.rewards.peralign_specific_reward_worker.PerAlignChoiceSpecificSentenceRewardWorker
-      
-      judge_model_type: "api" # "inference" or "api"
-      judge_model_name: "gpt-5-mini-2025-08-07"
-      judge_api_url: "https://api.apiplus.org/v1"
-      judge_api_key: "sk-K6tq07IP2UM744DR1YkZSqZ3MGpab7bJ6IImmBoUWxoT2Jpa"
-      sentence_reward_value: 0.1
-      overlap_aggregation: "sum"
-      smoothing_radius: 0
-      normalize_mode: "none"
-      cap_per_token: 2.0
-      max_matches_per_sentence: 100
-      scale_by_num_criteria: true
-      
-      # 正确性缩放
-      correct_reward_scale: 1.0
-      incorrect_reward_scale: 0.2
-      
-      # 步骤控制
-      guidance_until_step: 100
-      guidance_blend_span: 200
-      default_token_reward_strategy: "uniform_answer_scaled"
-      emit_scores_in_default_phase: true
-      bank_score_minmax_norm: false
-      
-      # 兼容性
-      return_response_level: true
-      return_scores: false
-      model_args:
-        model_name_or_path: /project/hdtaccuracy/models/base/Qwen3-4B
-        dtype: bf16
-        flash_attn: fa2
-        attn_implementation: fa2
-      # strategy_args:
-      #   strategy_name: vllm
-      #   strategy_config:
-      #     gpu_memory_utilization: 0.7
-      #     block_size: 128
-      #     max_model_len: 4096
-      generating_args:
-        max_new_tokens: 1024
-        top_p: 0.5
-        top_k: 20
-        num_beams: 1
-        temperature: 0.5
-        num_return_sequences: 1
-      data_args:
-        template: qwen3_nothink
-      strategy_args:
-        strategy_name: hf_infer
-        strategy_config: null
-      world_size: 32
-      # device_mapping: "[4, 5, 6, 7]"
-      infer_batch_size: 8
+    worker_cls: roll.pipeline.rlvr.rewards.math_rule_reward_worker.MathRuleRewardWorker
+    model_args:
+      model_name_or_path: ${pretrain}
+    data_args:
+      template: qwen2-vl
+    strategy_args:
+      strategy_name: hf_infer
+      strategy_config: ~
+    world_size: 8
+    infer_batch_size: 32

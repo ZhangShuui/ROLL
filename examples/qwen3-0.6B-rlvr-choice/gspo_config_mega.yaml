@@ -59,7 +59,7 @@ validation:
   data_args:
     template: qwen3
     file_name:
-      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v10/train_data_with_thinking/roll/val.json
+      - /project/hdtaccuracy/Personality-Alignment/choice_ver/v11/train_data_with_thinking/roll/val.json
     max_samples: 100
   generating_args:
     do_sample: True
@@ -131,7 +131,7 @@ actor_train:
       use_distributed_optimizer: true
       bf16: true
 
-  device_mapping: "[0, 1, 2, 3, 4 ,5, 6, 7]"             # 与原先保持一致
+  device_mapping: "[0, 1, 2, 3]"             # 与原先保持一致
   # device_mapping: "[0, 1]"
   # infer_batch_size: 8
 
@@ -159,8 +159,8 @@ actor_infer:
       block_size: 16
       max_model_len: 3072
   num_gpus_per_worker: 1
-  device_mapping: "[6,7]"                     # GPU4
-  # device_mapping: "[0, 1]"
+  # device_mapping: "[6,7]"                     # GPU4
+  device_mapping: "[0, 1]"
   infer_batch_size: 2
 
 # ========= Reference =========
@@ -177,8 +177,8 @@ reference:
       tensor_model_parallel_size: 1
       pipeline_model_parallel_size: 1
   # device_mapping: "[6, 7]"                    # GPU5
-  device_mapping: "[0, 1]"
-  infer_batch_size: 2
+  device_mapping: "[2, 3]"
+  infer_batch_size: 8
 
 # ========= Reward =========
 rewards:

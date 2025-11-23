@@ -23,5 +23,5 @@ set -euo pipefail
 
 cd /home/szhangfa/ROLL
 # python3 -m pip install -r requirements_torch260_vllm.txt
-bash examples/qwen3-1.7B-rlvr-choice/run_gspo_pipeline.sh
+bash examples/qwen3-1.7B-rlvr-choice/run_grpo_pipeline.sh
 "

@@ -12,10 +12,10 @@ hydra:
   output_subdir: null
 
 # ========= 基础信息 =========
-exp_name: "qwen3-1-7B-rlvr-exact-h800-8gpu"
+exp_name: "qwen3-1-7B-rlvr-grpo-h800-8gpu"
 seed: 42
-logging_dir: /project/hdtaccuracy/trains/gspo/qwen3_1_7b_choice_v5/logs
-output_dir: /project/hdtaccuracy/trains/gspo/qwen3_1_7b_choice_v5/output
+logging_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v5/logs
+output_dir: /project/hdtaccuracy/trains/grpo/qwen3_1_7b_choice_v5/output
 num_gpus_per_node: 4      # 8×H800
 # num_gpus_per_node: 4      # 2×H800
 
@@ -24,7 +24,7 @@ tracker_kwargs:
  api_key: dce12064d30900b2cc538f73e82997de5aafbb96
  project: roll_peralign
  notes: roll_peralign
- name: qwen3-1.7b-gspo-4gpu
+ name: qwen3-1.7b-grpo-4gpu
  tags:
    - rlvr
    - baseline
@@ -41,7 +41,6 @@ resume_from_checkpoint: false
 rollout_batch_size: 64
 prompt_length: 1024
 response_length: 2048
-importance_sampling: seq
 num_return_sequences_in_group: 8
 ppo_epochs: 1
 adv_estimator: "grpo"

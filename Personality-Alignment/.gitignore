@@ -1,2 +1,4 @@
 *.jsonl
 *.out
+*.log
+*.txt
